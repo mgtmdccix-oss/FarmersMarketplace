@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
 
 // GET /api/products - public browse with optional filters
 // Query params: category, minPrice, maxPrice, seller (farmer name), available (default true)
@@ -45,10 +46,11 @@ router.get('/:id', (req, res) => {
 });
 
 // POST /api/products - farmer only
-router.post('/', auth, (req, res) => {
+router.post('/', auth, validate.product, (req, res) => {
   if (req.user.role !== 'farmer')
     return res.status(403).json({ error: 'Only farmers can list products' });
 
+  const { name, description, price, quantity, unit } = req.body;
   const { name, description, unit, category } = req.body;
   const price    = parseFloat(req.body.price);
   const quantity = parseInt(req.body.quantity, 10);

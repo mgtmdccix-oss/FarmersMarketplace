@@ -3,12 +3,11 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db/schema');
 const { createWallet } = require('../stellar');
+const validate = require('../middleware/validate');
 
 // POST /api/auth/register
-router.post('/register', async (req, res) => {
+router.post('/register', validate.register, async (req, res) => {
   const { name, email, password, role } = req.body;
-  if (!name || !email || !password || !role)
-    return res.status(400).json({ error: 'All fields required' });
 
   try {
     const hashed = await bcrypt.hash(password, 10);
@@ -33,7 +32,7 @@ router.post('/register', async (req, res) => {
 });
 
 // POST /api/auth/login
-router.post('/login', async (req, res) => {
+router.post('/login', validate.login, async (req, res) => {
   const { email, password } = req.body;
   const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
   if (!user) return res.status(401).json({ error: 'Invalid credentials' });
