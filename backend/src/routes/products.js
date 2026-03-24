@@ -5,14 +5,24 @@ const validate = require('../middleware/validate');
 
 // GET /api/products - public browse
 router.get('/', (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+  const offset = (page - 1) * limit;
+
+  const total = db.prepare('SELECT COUNT(*) as count FROM products WHERE quantity > 0').get().count;
   const products = db.prepare(`
     SELECT p.*, u.name as farmer_name
     FROM products p
     JOIN users u ON p.farmer_id = u.id
     WHERE p.quantity > 0
     ORDER BY p.created_at DESC
-  `).all();
-  res.json(products);
+    LIMIT ? OFFSET ?
+  `).all(limit, offset);
+
+  res.json({
+    data: products,
+    meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
+  });
 });
 
 // GET /api/products/:id
