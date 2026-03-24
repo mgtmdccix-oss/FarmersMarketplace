@@ -23,11 +23,15 @@ router.post('/', auth, validate.order, async (req, res) => {
   `).get(product_id);
 
   if (!product) return res.status(404).json({ error: 'Product not found' });
-  if (product.quantity < quantity) return res.status(400).json({ error: 'Insufficient stock' });
 
   const buyer = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
   const totalPrice = product.price * quantity;
 
+  // Atomically decrement stock only if sufficient quantity exists, then create order
+  const reserveStock = db.transaction((buyerId, productId, qty, total) => {
+    const deducted = db.prepare(
+      'UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?'
+    ).run(qty, productId, qty);
   // Verify buyer has sufficient XLM balance (amount + network fee)
   const balance = await getBalance(buyer.stellar_public_key);
   const required = totalPrice + 0.00001;
@@ -43,7 +47,21 @@ router.post('/', auth, validate.order, async (req, res) => {
     'INSERT INTO orders (buyer_id, product_id, quantity, total_price, status) VALUES (?, ?, ?, ?, ?)'
   ).run(req.user.id, product_id, quantity, totalPrice, 'pending');
 
-  const orderId = order.lastInsertRowid;
+    if (deducted.changes === 0) throw new Error('Insufficient stock');
+
+    const order = db.prepare(
+      'INSERT INTO orders (buyer_id, product_id, quantity, total_price, status) VALUES (?, ?, ?, ?, ?)'
+    ).run(buyerId, productId, qty, total, 'pending');
+
+    return order.lastInsertRowid;
+  });
+
+  let orderId;
+  try {
+    orderId = reserveStock(req.user.id, product_id, quantity, totalPrice);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
 
   try {
     // Execute Stellar payment
@@ -54,12 +72,11 @@ router.post('/', auth, validate.order, async (req, res) => {
       memo: `Order#${orderId}`,
     });
 
-    // Update order and reduce stock
     db.prepare('UPDATE orders SET status = ?, stellar_tx_hash = ? WHERE id = ?').run('paid', txHash, orderId);
-    db.prepare('UPDATE products SET quantity = quantity - ? WHERE id = ?').run(quantity, product_id);
-
     res.json({ orderId, status: 'paid', txHash, totalPrice });
   } catch (err) {
+    // Payment failed — restore stock and mark order failed
+    db.prepare('UPDATE products SET quantity = quantity + ? WHERE id = ?').run(quantity, product_id);
     db.prepare('UPDATE orders SET status = ? WHERE id = ?').run('failed', orderId);
     res.status(402).json({ error: 'Payment failed: ' + err.message, orderId });
   }
