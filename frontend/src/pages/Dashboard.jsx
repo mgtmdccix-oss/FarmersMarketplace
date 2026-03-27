@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import Spinner from '../components/Spinner';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_SIZE_MB = 5;
@@ -47,6 +48,8 @@ export default function Dashboard() {
   const [sales, setSales] = useState([]);
   const [salesMsg, setSalesMsg] = useState({});
   const [formErrors, setFormErrors] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
 
   // image state
   const [imageFile, setImageFile] = useState(null);
@@ -66,28 +69,32 @@ export default function Dashboard() {
   const avatarInputRef = useRef(null);
 
   async function load() {
+    setLoading(true);
+    setError(null);
     try {
-      const res = await api.getMyProducts();
-      setProducts(res.data ?? res);
-    } catch {}
-    try {
-      const res = await api.getSales();
-      setSales(res.data ?? res);
-    } catch {}
+      const [productsRes, salesRes, profileRes] = await Promise.all([
+        api.getMyProducts().catch(() => ({ data: [] })),
+        api.getSales().catch(() => ({ data: [] })),
+        user?.id ? api.getFarmer(user.id).catch(() => ({})) : Promise.resolve({})
+      ]);
+      
+      setProducts(productsRes.data ?? productsRes);
+      setSales(salesRes.data ?? salesRes);
+      
+      if (profileRes.data) {
+        const d = profileRes.data;
+        setProfile({ bio: d.bio || '', location: d.location || '', avatar_url: d.avatar_url || '' });
+        if (d.avatar_url) setAvatarPreview(d.avatar_url);
+      }
+    } catch (err) {
+      setError(err?.message || 'Failed to load dashboard data');
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
     load();
-    // Load current profile
-    if (user?.id) {
-      api.getFarmer(user.id)
-        .then(res => {
-          const d = res.data;
-          setProfile({ bio: d.bio || '', location: d.location || '', avatar_url: d.avatar_url || '' });
-          if (d.avatar_url) setAvatarPreview(d.avatar_url);
-        })
-        .catch(() => {});
-    }
   }, []);
 
   function validateAndSetImage(file) {
@@ -229,6 +236,9 @@ export default function Dashboard() {
       load();
     } catch (err) {
       alert(err.message);
+    }
+  }
+
   async function handleStatusUpdate(orderId, status) {
     try {
       await api.updateOrderStatus(orderId, status);
@@ -237,6 +247,18 @@ export default function Dashboard() {
     } catch (e) {
       setSalesMsg(prev => ({ ...prev, [orderId]: { type: 'err', text: e.message } }));
     }
+  }
+
+  if (loading) return <Spinner />;
+  
+  if (error) {
+    return (
+      <div style={s.page}>
+        <div style={{ ...s.msg, background: '#fee', color: '#c0392b', marginBottom: 16 }}>
+          <strong>Error loading dashboard:</strong> {error}
+        </div>
+      </div>
+    );
   }
 
   return (

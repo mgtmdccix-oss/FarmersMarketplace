@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { getStellarErrorMessage } from '../utils/stellarErrors';
 import { useXlmRate } from '../utils/useXlmRate';
 import StarRating from '../components/StarRating';
+import Spinner from '../components/Spinner';
 
 const s = {
   page:       { maxWidth: 640, margin: '40px auto', padding: 24 },
@@ -34,19 +35,13 @@ export default function ProductDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [product, setProduct] = useState(null);
-  const [qty, setQty] = useState(1);
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-  const { usd } = useXlmRate();
-
   const [product, setProduct]   = useState(null);
   const [reviews, setReviews]   = useState([]);
   const [qty, setQty]           = useState(1);
   const [loading, setLoading]   = useState(false);
   const [result, setResult]     = useState(null);
   const [error, setError]       = useState('');
+  const { usd } = useXlmRate();
 
   // Review form state
   const [paidOrders, setPaidOrders]     = useState([]);
@@ -85,7 +80,7 @@ export default function ProductDetail() {
       .catch(() => {});
   }, [id, user]);
 
-  if (!product) return <div style={{ padding: 40, textAlign: 'center' }}>Loading...</div>;
+  if (!product) return <Spinner />;
 
   const total = (product.price * qty).toFixed(2);
 
