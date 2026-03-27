@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { validateLogin, validateRegister, validatePassword } from '../utils/validation';
@@ -113,6 +113,8 @@ export function RegisterPage() {
   const [formError, setFormError] = useState('');
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const refCode = searchParams.get('ref');
 
   function handleChange(field, value) {
     setForm(f => ({ ...f, [field]: value }));
@@ -125,7 +127,7 @@ export function RegisterPage() {
     const errs = validateRegister(form);
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
     try {
-      const { token, user } = await api.register(form);
+      const { token, user } = await api.register({ ...form, ref: refCode });
       login(token, user);
       navigate(user.role === 'farmer' ? '/dashboard' : '/marketplace');
     } catch (err) {
