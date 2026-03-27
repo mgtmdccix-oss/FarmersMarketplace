@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import Spinner from '../components/Spinner';
+import { validateProduct } from '../utils/validation';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const MAX_SIZE_MB = 5;
@@ -33,6 +34,7 @@ const s = {
   preview: { width: '100%', maxHeight: 180, objectFit: 'cover', borderRadius: 8, marginBottom: 8, display: 'block' },
   removeImg: { background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 12, marginBottom: 12 },
   imgErr: { color: '#c0392b', fontSize: 12, marginBottom: 8 },
+  fieldErr: { color: '#c0392b', fontSize: 12, marginBottom: 8 },
   uploading: { color: '#888', fontSize: 12, marginBottom: 8 },
   productThumb: { width: 36, height: 36, objectFit: 'cover', borderRadius: 6, marginRight: 10, verticalAlign: 'middle' },
 };
@@ -168,27 +170,14 @@ export default function Dashboard() {
   async function handleAdd(e) {
     e.preventDefault();
     setMsg(null);
-    setFormErrors({});
 
-    // Validate price and quantity
-    const errors = {};
-    const price = parseFloat(form.price);
-    const quantity = parseInt(form.quantity, 10);
-
-    if (!form.name || !form.name.trim()) {
-      errors.name = 'Product name is required';
-    }
-    if (!form.price || isNaN(price) || price <= 0) {
-      errors.price = 'Price must be a positive number';
-    }
-    if (!form.quantity || isNaN(quantity) || quantity <= 0) {
-      errors.quantity = 'Quantity must be a positive integer';
-    }
-
+    // Client-side validation
+    const errors = validateProduct(form);
     if (Object.keys(errors).length > 0) {
       setFormErrors(errors);
       return;
     }
+    setFormErrors({});
 
     // Upload image first if one is selected but not yet uploaded
     let finalImageUrl = imageUrl;
@@ -277,18 +266,18 @@ export default function Dashboard() {
               <div key={key}>
                 <label style={s.label}>{label}</label>
                 <input
-                  style={{ ...s.input, borderColor: formErrors[key] ? '#c0392b' : '#ddd' }}
+                  style={formErrors[key] ? { ...s.input, borderColor: '#c0392b' } : s.input}
                   value={form[key]}
                   onChange={e => {
                     setForm({ ...form, [key]: e.target.value });
-                    if (formErrors[key]) setFormErrors({ ...formErrors, [key]: undefined });
+                    if (formErrors[key]) setFormErrors(fe => ({ ...fe, [key]: '' }));
                   }}
                   required={key !== 'unit'}
-                  type={key === 'price' || key === 'quantity' ? 'number' : undefined}
-                  step={key === 'price' ? '0.01' : key === 'quantity' ? '1' : undefined}
+                  type={key === 'price' || key === 'quantity' ? 'number' : 'text'}
+                  step={key === 'price' ? 'any' : undefined}
                   min={key === 'price' || key === 'quantity' ? '0' : undefined}
                 />
-                {formErrors[key] && <div style={{ ...s.imgErr, marginTop: -8, marginBottom: 4 }}>{formErrors[key]}</div>}
+                {formErrors[key] && <div style={s.fieldErr} role="alert">{formErrors[key]}</div>}
               </div>
             ))}
 
@@ -432,6 +421,7 @@ export default function Dashboard() {
 
           <button style={s.btn} type="submit" disabled={avatarUploading}>Save Profile</button>
         </form>
+      </div>
 
       {/* Order management panel */}
       <div style={{ ...s.card, marginTop: 24 }}>
