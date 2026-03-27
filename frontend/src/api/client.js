@@ -68,6 +68,7 @@ async function request(path, options = {}, retry = true) {
   return data;
 }
 
+/** Build a query string from a params object, omitting empty/null values. */
 function toQs(params) {
   const entries = Object.entries(params).filter(([, v]) => v !== '' && v != null);
   return entries.length ? '?' + new URLSearchParams(entries).toString() : '';
@@ -87,6 +88,17 @@ export const api = {
   getMyProducts: ()            => request('/products/mine/list'),
   deleteProduct: (id)          => request(`/products/${id}`, { method: 'DELETE' }),
   getProductReviews: (id)      => request(`/products/${id}/reviews`),
+  login: (body) => request('/auth/login', { method: 'POST', body }),
+  logout: () => request('/auth/logout', { method: 'POST' }),
+  refresh: () => refreshAccessToken(),
+
+  // filters may include: category, minPrice, maxPrice, seller, available, page, limit
+  getProducts: (filters = {}) => request(`/products${toQs(filters)}`),
+  getCategories: () => request('/products/categories'),
+  getProduct: (id) => request(`/products/${id}`),
+  createProduct: (body) => request('/products', { method: 'POST', body }),
+  getMyProducts: () => request('/products/mine/list'),
+  deleteProduct: (id) => request(`/products/${id}`, { method: 'DELETE' }),
 
   uploadProductImage: (file) => {
     const form = new FormData();
@@ -104,4 +116,18 @@ export const api = {
   getWallet:      ()           => request('/wallet'),
   getTransactions: ()          => request('/wallet/transactions'),
   fundWallet:     ()           => request('/wallet/fund', { method: 'POST' }),
+  searchProducts: (q) => request(`/products/search?q=${encodeURIComponent(q)}`),
+
+  placeOrder: (body) => request('/orders', { method: 'POST', body }),
+  // params may include: status, page, limit
+  getOrders: (params = {}) => request(`/orders${toQs(params)}`),
+  // params may include: page, limit
+  getSales: (params = {}) => request(`/orders/sales${toQs(params)}`),
+  getOrders: (status) => request(`/orders${status ? `?status=${status}` : ''}`),
+  getSales: () => request('/orders/sales'),
+  updateOrderStatus: (id, status) => request(`/orders/${id}/status`, { method: 'PATCH', body: { status } }),
+
+  getWallet: () => request('/wallet'),
+  getTransactions: () => request('/wallet/transactions'),
+  fundWallet: () => request('/wallet/fund', { method: 'POST' }),
 };
