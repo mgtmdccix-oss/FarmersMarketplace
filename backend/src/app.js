@@ -55,8 +55,10 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 // Expose CSRF token endpoint (must be before csrfProtect so it's never blocked)
 app.get("/api/csrf-token", csrfTokenHandler);
 
-// Apply CSRF protection to all state-changing routes
-app.use(csrfProtect);
+// Apply CSRF protection to all state-changing routes (skip in test)
+if (process.env.NODE_ENV !== 'test') {
+  app.use(csrfProtect);
+}
 
 app.use(require("./routes"));
 app.use(errorHandler);

@@ -6,7 +6,7 @@ const { err } = require("../middleware/error");
 const { sanitizeText } = require("../utils/sanitize");
 
 // POST /api/reviews - buyer submits a review for a paid order
-router.post("/reviews", auth, validate.review, (req, res) => {
+router.post("/", auth, validate.review, (req, res) => {
   if (req.user.role !== "buyer")
     return err(res, 403, "Only buyers can submit reviews", "forbidden");
 

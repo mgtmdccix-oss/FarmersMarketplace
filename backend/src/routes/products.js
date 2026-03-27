@@ -6,6 +6,14 @@ const validate = require("../middleware/validate");
 const upload = require("../middleware/upload");
 const { err } = require("../middleware/error");
 const { sanitizeText } = require("../utils/sanitize");
+const path = require('path');
+const router = require('express').Router();
+const db = require('../db/schema');
+const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const upload = require('../middleware/upload');
+const { err } = require('../middleware/error');
+const { sendBackInStockEmail } = require('../utils/mailer');
 
 // GET /api/products - public browse with optional filters
 router.get("/", (req, res) => {
@@ -215,6 +223,64 @@ router.patch("/:id/restock", auth, (req, res) => {
     req.params.id,
   );
   res.json({ success: true, message: "Restocked successfully" });
+router.patch('/:id/restock', auth, async (req, res) => {
+  if (req.user.role !== 'farmer') return err(res, 403, 'Only farmers can restock products', 'forbidden');
+
+  const quantity = parseInt(req.body.quantity, 10);
+  if (isNaN(quantity) || quantity <= 0) return err(res, 400, 'Quantity must be a positive integer', 'validation_error');
+
+  const product = db.prepare('SELECT * FROM products WHERE id = ? AND farmer_id = ?').get(req.params.id, req.user.id);
+  if (!product) return err(res, 404, 'Product not found or not yours', 'not_found');
+
+  const wasOutOfStock = product.quantity === 0;
+  db.prepare('UPDATE products SET quantity = quantity + ? WHERE id = ?').run(quantity, req.params.id);
+
+  // Notify subscribers if product was out of stock
+  if (wasOutOfStock) {
+    const subscribers = db.prepare(`
+      SELECT u.email, u.name FROM stock_alerts sa
+      JOIN users u ON sa.user_id = u.id
+      WHERE sa.product_id = ?
+    `).all(req.params.id);
+
+    if (subscribers.length > 0) {
+      db.prepare('DELETE FROM stock_alerts WHERE product_id = ?').run(req.params.id);
+      Promise.all(
+        subscribers.map(s => sendBackInStockEmail({ email: s.email, name: s.name, productName: product.name }))
+      ).catch(e => console.error('[stock-alert] Email send failed:', e.message));
+    }
+  }
+
+  res.json({ success: true, message: 'Restocked successfully' });
+});
+
+// POST /api/products/:id/alert - buyer subscribes to back-in-stock notification
+router.post('/:id/alert', auth, (req, res) => {
+  if (req.user.role !== 'buyer') return err(res, 403, 'Only buyers can set alerts', 'forbidden');
+
+  const product = db.prepare('SELECT id, quantity FROM products WHERE id = ?').get(req.params.id);
+  if (!product) return err(res, 404, 'Product not found', 'not_found');
+  if (product.quantity > 0) return err(res, 400, 'Product is already in stock', 'in_stock');
+
+  try {
+    db.prepare('INSERT INTO stock_alerts (user_id, product_id) VALUES (?, ?)').run(req.user.id, req.params.id);
+    res.json({ success: true, message: 'Alert set' });
+  } catch (e) {
+    if (e.message.includes('UNIQUE')) return err(res, 409, 'Alert already set', 'conflict');
+    throw e;
+  }
+});
+
+// DELETE /api/products/:id/alert - buyer unsubscribes
+router.delete('/:id/alert', auth, (req, res) => {
+  db.prepare('DELETE FROM stock_alerts WHERE user_id = ? AND product_id = ?').run(req.user.id, req.params.id);
+  res.json({ success: true, message: 'Alert removed' });
+});
+
+// GET /api/products/:id/alert/status - check if current user has an alert set
+router.get('/:id/alert/status', auth, (req, res) => {
+  const row = db.prepare('SELECT id FROM stock_alerts WHERE user_id = ? AND product_id = ?').get(req.user.id, req.params.id);
+  res.json({ success: true, subscribed: !!row });
 });
 
 // POST /api/products - farmer only
@@ -224,6 +290,8 @@ router.post("/", auth, validate.product, (req, res) => {
 
   const { name, description, unit, category, image_url } = req.body;
   const price = parseFloat(req.body.price);
+  const { name, description, unit, category, image_url, tags } = req.body;
+  const price    = parseFloat(req.body.price);
   const quantity = parseInt(req.body.quantity, 10);
 
   if (!name || !name.trim())

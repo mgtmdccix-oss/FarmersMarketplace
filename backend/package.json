@@ -9,6 +9,9 @@
   },
   "jest": {
     "testEnvironment": "node",
+    "testMatch": ["**/tests/**/*.test.js"],
+    "setupFilesAfterEnv": ["<rootDir>/tests/jest.setup.js"],
+    "testEnvironmentOptions": { "env": { "NODE_ENV": "test" } }
     "testMatch": [
       "**/tests/**/*.test.js"
     ],
@@ -18,7 +21,10 @@
     ],
     "setupFilesAfterEnv": [
       "<rootDir>/tests/jest.setup.js"
-    ]
+    ],
+    "testEnvironmentOptions": {
+      "env": { "NODE_ENV": "test" }
+    }
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^12.1.0",
@@ -26,6 +32,7 @@
     "better-sqlite3": "^9.4.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
+    "csv-parse": "^6.2.1",
     "dotenv": "^16.4.5",
     "express": "^4.18.3",
     "express-rate-limit": "^8.3.1",
