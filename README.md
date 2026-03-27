@@ -1,5 +1,7 @@
 # 🌿 Farmers Marketplace
 
+[![CI](https://github.com/techisigu/FarmersMarketplace/workflows/CI/badge.svg)](https://github.com/techisigu/FarmersMarketplace/actions)
+
 A minimal MVP marketplace where farmers list products and buyers pay using the **Stellar Network (XLM)**.
 
 ## Stack
