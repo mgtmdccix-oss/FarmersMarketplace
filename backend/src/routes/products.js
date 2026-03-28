@@ -4,40 +4,40 @@ const auth = require('../middleware/auth');
 const validate = require('../middleware/validate');
 
 // GET /api/products - public browse with optional filters
-// Query params: category, minPrice, maxPrice, seller (farmer name), available (default true)
+// Query params: category, minPrice, maxPrice, seller (farmer name), available (default true), page, limit
 router.get('/', (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page) || 1);
+  const page  = Math.max(1, parseInt(req.query.page)  || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const offset = (page - 1) * limit;
 
-  const total = db.prepare('SELECT COUNT(*) as count FROM products WHERE quantity > 0').get().count;
+  const { category, minPrice, maxPrice, seller, available = 'true' } = req.query;
+
+  let where = 'WHERE 1=1';
+  const params = [];
+
+  if (available === 'true') { where += ' AND p.quantity > 0'; }
+  if (category) { where += ' AND p.category = ?';    params.push(category); }
+  if (minPrice) { where += ' AND p.price >= ?';      params.push(parseFloat(minPrice)); }
+  if (maxPrice) { where += ' AND p.price <= ?';      params.push(parseFloat(maxPrice)); }
+  if (seller)   { where += ' AND u.name LIKE ?';     params.push(`%${seller}%`); }
+
+  const total = db.prepare(
+    `SELECT COUNT(*) as count FROM products p JOIN users u ON p.farmer_id = u.id ${where}`
+  ).get(...params).count;
+
   const products = db.prepare(`
     SELECT p.*, u.name as farmer_name
     FROM products p
     JOIN users u ON p.farmer_id = u.id
-    WHERE p.quantity > 0
-    ORDER BY p.created_at DESC
+    ${where}
+    ORDER BY p.is_featured DESC, p.created_at DESC
     LIMIT ? OFFSET ?
-  `).all(limit, offset);
+  `).all(...params, limit, offset);
 
   res.json({
     data: products,
     meta: { total, page, limit, totalPages: Math.ceil(total / limit) },
   });
-  const { category, minPrice, maxPrice, seller, available = 'true' } = req.query;
-
-  let sql = `SELECT p.*, u.name as farmer_name FROM products p JOIN users u ON p.farmer_id = u.id WHERE 1=1`;
-  const params = [];
-
-  if (available === 'true') { sql += ` AND p.quantity > 0`; }
-  if (category)  { sql += ` AND p.category = ?`;              params.push(category); }
-  if (minPrice)  { sql += ` AND p.price >= ?`;                params.push(parseFloat(minPrice)); }
-  if (maxPrice)  { sql += ` AND p.price <= ?`;                params.push(parseFloat(maxPrice)); }
-  if (seller)    { sql += ` AND u.name LIKE ?`;               params.push(`%${seller}%`); }
-
-  sql += ` ORDER BY p.created_at DESC`;
-
-  res.json(db.prepare(sql).all(...params));
 });
 
 // GET /api/products/categories - list distinct categories

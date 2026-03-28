@@ -33,6 +33,7 @@ db.exec(`
     price REAL NOT NULL,
     quantity INTEGER NOT NULL,
     unit TEXT DEFAULT 'unit',
+    is_featured INTEGER NOT NULL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (farmer_id) REFERENCES users(id)
   );
@@ -65,6 +66,7 @@ db.exec(`
 
 // Migrate existing DB: add columns/tables if missing
 try { db.exec(`ALTER TABLE products ADD COLUMN category TEXT DEFAULT 'other'`); } catch {}
+try { db.exec(`ALTER TABLE products ADD COLUMN is_featured INTEGER NOT NULL DEFAULT 0`); } catch {}
 
 // Migrate users table to support admin role (SQLite requires table recreation to change CHECK constraint)
 try {

@@ -22,6 +22,7 @@ const s = {
   price: { fontWeight: 700, color: '#2d6a4f', fontSize: 18 },
   qty: { fontSize: 12, color: '#888', marginTop: 4 },
   badge: { display: 'inline-block', fontSize: 11, background: '#d8f3dc', color: '#2d6a4f', borderRadius: 4, padding: '2px 7px', marginBottom: 8 },
+  featuredBadge: { display: 'inline-block', fontSize: 11, background: '#fff3cd', color: '#856404', borderRadius: 4, padding: '2px 7px', marginBottom: 8, marginRight: 4, fontWeight: 700 },
   empty: { textAlign: 'center', padding: 60, color: '#888' },
 };
 
@@ -108,11 +109,16 @@ export default function Marketplace() {
       ) : (
         <div style={s.grid}>
           {visible.map(p => (
-            <div key={p.id} style={s.card} onClick={() => navigate(`/product/${p.id}`)}
+            <div key={p.id}
+              style={{ ...s.card, ...(p.is_featured ? { border: '2px solid #ffc107', boxShadow: '0 2px 12px #ffc10733' } : {}) }}
+              onClick={() => navigate(`/product/${p.id}`)}
               onMouseEnter={e => e.currentTarget.style.transform = 'translateY(-2px)'}
               onMouseLeave={e => e.currentTarget.style.transform = ''}>
               <div style={{ fontSize: 32, marginBottom: 8 }}>🥬</div>
-              {p.category && p.category !== 'other' && <div style={s.badge}>{p.category}</div>}
+              <div>
+                {p.is_featured && <span style={s.featuredBadge}>⭐ Featured</span>}
+                {p.category && p.category !== 'other' && <span style={s.badge}>{p.category}</span>}
+              </div>
               <div style={s.name}>{p.name}</div>
               <div style={s.farmer}>by {p.farmer_name}</div>
               <div style={s.desc}>{p.description || 'Fresh from the farm'}</div>

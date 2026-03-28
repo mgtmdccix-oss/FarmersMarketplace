@@ -79,4 +79,7 @@ export const api = {
   fileDispute: (body) => request('/disputes', { method: 'POST', body }),
   getDisputes: () => request('/disputes'),
   resolveDispute: (id, body) => request(`/disputes/${id}`, { method: 'PATCH', body }),
+
+  adminGetProducts: () => request('/admin/products'),
+  adminToggleFeature: (id, featured) => request(`/admin/products/${id}/feature`, { method: 'PATCH', body: { featured } }),
 };
