@@ -389,6 +389,22 @@ try {
   console.error('[DB] Failed to create bundles tables:', err.message);
 }
 
+// account_alerts table — placeholder kept for branch compatibility
+// availability_calendar table
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS availability_calendar (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      week_start TEXT NOT NULL,
+      available  INTEGER NOT NULL DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(product_id, week_start),
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+  `);
+} catch (err) {
+  console.error('[DB] Failed to create availability_calendar table:', err.message);
 // cooperatives + multisig tables
 try {
   db.exec(`

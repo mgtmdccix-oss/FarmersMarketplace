@@ -125,6 +125,11 @@ export default function Dashboard() {
   const [couponForm, setCouponForm] = useState({ code: '', discount_type: 'percent', discount_value: '', max_uses: '', expires_at: '' });
   const [couponMsg, setCouponMsg] = useState(null);
 
+  // Calendar editor state
+  const [calendarProductId, setCalendarProductId] = useState(null);
+  const [calendarProductName, setCalendarProductName] = useState('');
+  const [calendarWeeks, setCalendarWeeks] = useState([]);
+  const [calendarSaving, setCalendarSaving] = useState(false);
   // Cooperative / multisig state
   const [cooperatives, setCooperatives] = useState([]);
   const [pendingTxs, setPendingTxs] = useState([]);
@@ -716,6 +721,17 @@ export default function Dashboard() {
                   >
                     {t('dashboard.qr')}
                   </button>
+                  <button
+                    style={{ ...s.btn, padding: '4px 10px', fontSize: 12, background: '#1a6b8a' }}
+                    onClick={async () => {
+                      const res = await api.getCalendar(p.id).catch(() => ({ data: [] }));
+                      setCalendarWeeks(res.data ?? []);
+                      setCalendarProductId(p.id);
+                      setCalendarProductName(p.name);
+                    }}
+                  >
+                    📅 Calendar
+                  </button>
                   <input
                     type="number" min="1" placeholder="+Qty"
                     style={{ ...s.input, width: 70, marginBottom: 0, padding: '4px 8px' }}
@@ -1206,6 +1222,40 @@ export default function Dashboard() {
                 {t('dashboard.close')}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Availability Calendar Modal */}
+      {calendarProductId && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+          onClick={() => setCalendarProductId(null)}>
+          <div style={{ background: '#fff', borderRadius: 16, padding: 28, maxWidth: 480, width: '95%', boxShadow: '0 8px 32px #0003' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 17, fontWeight: 700, color: '#2d6a4f', marginBottom: 4 }}>📅 Availability Calendar</div>
+            <div style={{ fontSize: 13, color: '#888', marginBottom: 16 }}>{calendarProductName}</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 20 }}>
+              {calendarWeeks.map(w => (
+                <button key={w.week_start}
+                  onClick={async () => {
+                    setCalendarSaving(true);
+                    const newAvail = !w.available;
+                    await api.setCalendarWeek(calendarProductId, { week_start: w.week_start, available: newAvail }).catch(() => {});
+                    setCalendarWeeks(prev => prev.map(x => x.week_start === w.week_start ? { ...x, available: newAvail } : x));
+                    setCalendarSaving(false);
+                  }}
+                  disabled={calendarSaving}
+                  style={{
+                    padding: '6px 12px', borderRadius: 8, fontSize: 12, cursor: 'pointer',
+                    border: '1px solid ' + (w.available ? '#2d6a4f' : '#ddd'),
+                    background: w.available ? '#d8f3dc' : '#f5f5f5',
+                    color: w.available ? '#2d6a4f' : '#aaa', fontWeight: 600,
+                  }}>
+                  {w.available ? '✓' : '✗'} {new Date(w.week_start + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 12, color: '#888', marginBottom: 16 }}>Click a week to toggle availability.</div>
+            <button style={{ ...s.btn, background: '#888', fontSize: 13, padding: '8px 18px' }} onClick={() => setCalendarProductId(null)}>Close</button>
           </div>
         </div>
       )}

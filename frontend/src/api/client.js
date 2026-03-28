@@ -343,6 +343,9 @@ export const api = {
   pauseSubscription: (id) => request(`/subscriptions/${id}/pause`, { method: 'PATCH' }),
   resumeSubscription: (id) => request(`/subscriptions/${id}/resume`, { method: 'PATCH' }),
 
+  // Availability calendar
+  getCalendar: (productId) => request(`/products/${productId}/calendar`),
+  setCalendarWeek: (productId, body) => request(`/products/${productId}/calendar`, { method: 'POST', body }),
   // Cooperatives & multi-sig
   createCooperative: (body) => request('/cooperatives', { method: 'POST', body }),
   getCooperatives: () => request('/cooperatives'),

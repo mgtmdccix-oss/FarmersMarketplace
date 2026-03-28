@@ -89,6 +89,9 @@ export default function ProductDetail() {
   const [couponError, setCouponError] = useState('');
   const [couponLoading, setCouponLoading] = useState(false);
 
+  // Availability calendar
+  const [calendar, setCalendar] = useState([]);
+  const [selectedWeek, setSelectedWeek] = useState(null); // YYYY-MM-DD of chosen week
   // Platform fee state
   const [feeInfo, setFeeInfo] = useState(null); // { feePercent, feeAmount, farmerAmount }
 
@@ -104,6 +107,13 @@ export default function ProductDetail() {
       const imgs = res.data ?? [];
       setImages(imgs);
       if (imgs.length > 0) setActiveImg(0);
+    }).catch(() => {});
+    api.getCalendar(id).then(res => {
+      const weeks = res.data ?? [];
+      setCalendar(weeks);
+      // Default to first available week
+      const first = weeks.find(w => w.available);
+      if (first) setSelectedWeek(first.week_start);
     }).catch(() => {});
   }, [id, loadReviews, navigate]);
 
@@ -378,6 +388,32 @@ export default function ProductDetail() {
         </div>
         {error && <div style={s.err}>{error}</div>}
 
+        {/* Availability Calendar */}
+        {calendar.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#333', marginBottom: 8 }}>📅 Weekly Availability</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {calendar.map(w => (
+                <button
+                  key={w.week_start}
+                  disabled={!w.available}
+                  onClick={() => w.available && setSelectedWeek(w.week_start)}
+                  style={{
+                    padding: '5px 10px', borderRadius: 6, fontSize: 12, cursor: w.available ? 'pointer' : 'not-allowed',
+                    border: selectedWeek === w.week_start ? '2px solid #2d6a4f' : '1px solid #ddd',
+                    background: !w.available ? '#f5f5f5' : selectedWeek === w.week_start ? '#d8f3dc' : '#fff',
+                    color: !w.available ? '#bbb' : '#333',
+                    fontWeight: selectedWeek === w.week_start ? 700 : 400,
+                  }}
+                >
+                  {w.available ? '' : '✗ '}{new Date(w.week_start + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </button>
+              ))}
+            </div>
+            {selectedWeek && <div style={{ fontSize: 12, color: '#2d6a4f', marginTop: 4 }}>Week of {selectedWeek} selected</div>}
+          </div>
+        )}
+
         {product.quantity === 0 ? (
           <div>
             <div style={{ color: '#c0392b', fontWeight: 600, marginBottom: 12 }}>{t('productDetail.outOfStock')}</div>
@@ -396,7 +432,7 @@ export default function ProductDetail() {
               </label>
             )}
             <button style={{ ...s.btn, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
-              onClick={handleBuy} disabled={loading}>
+              onClick={handleBuy} disabled={loading || (calendar.length > 0 && selectedWeek && !calendar.find(w => w.week_start === selectedWeek)?.available)}>
               {loading && <div className="spinner-sm" style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
               {loading ? t('productDetail.processing') : `${useEscrow ? t('productDetail.payToEscrow') : t('productDetail.buyNow')} · ${total} XLM`}
             </button>
