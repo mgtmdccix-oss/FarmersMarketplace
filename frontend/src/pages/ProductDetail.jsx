@@ -11,9 +11,21 @@ import Spinner from '../components/Spinner';
 import { useTranslation } from 'react-i18next';
 
 const s = {
-  page: { maxWidth: 640, margin: '40px auto', padding: 24 },
-  card: { background: '#fff', borderRadius: 12, padding: 32, boxShadow: '0 1px 8px #0001', marginBottom: 24 },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, marginBottom: 16 },
+  page: { maxWidth: 640, margin: "40px auto", padding: 16 },
+  card: {
+    background: "#fff",
+    borderRadius: 12,
+    padding: 24,
+    boxShadow: "0 1px 8px #0001",
+    marginBottom: 24,
+  },
+  header: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 16,
+    marginBottom: 16,
+  },
   headerContent: { flex: 1 },
   favoriteBtn: { background: 'none', border: 'none', fontSize: 32, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', width: 48, height: 48, flexShrink: 0 },
   name:       { fontSize: 28, fontWeight: 700, color: '#2d6a4f', marginBottom: 4 },
@@ -22,8 +34,8 @@ const s = {
   price:      { fontSize: 24, fontWeight: 700, color: '#2d6a4f', marginBottom: 8 },
   row:        { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 },
   input:      { width: 80, padding: '8px 12px', border: '1px solid #ddd', borderRadius: 8, fontSize: 16, textAlign: 'center' },
-  btn:        { background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: 8, padding: '12px 28px', cursor: 'pointer', fontWeight: 600, fontSize: 16 },
-  btnSm:      { background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', cursor: 'pointer', fontWeight: 600, fontSize: 14 },
+  btn:        { background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: 8, padding: '12px 28px', cursor: 'pointer', fontWeight: 600, fontSize: 16, minHeight: 44 },
+  btnSm:      { background: '#2d6a4f', color: '#fff', border: 'none', borderRadius: 8, padding: '9px 20px', cursor: 'pointer', fontWeight: 600, fontSize: 14, minHeight: 44 },
   total:      { background: '#f0faf4', borderRadius: 8, padding: '12px 16px', marginBottom: 20, fontSize: 15 },
   err:        { color: '#c0392b', fontSize: 14, marginTop: 8 },
   success:    { background: '#d8f3dc', borderRadius: 8, padding: 16, color: '#2d6a4f' },
@@ -82,6 +94,17 @@ export default function ProductDetail() {
 
   // Nutrition state
   const [nutritionExpanded, setNutritionExpanded] = useState(false);
+  // Path payment state
+  const [buyerAssets, setBuyerAssets] = useState([]);
+  const [sourceAsset, setSourceAsset] = useState(null); // null = XLM (default)
+  const [pathEstimate, setPathEstimate] = useState(null); // { sourceAmount, sourceCode }
+  const [pathEstimateLoading, setPathEstimateLoading] = useState(false);
+  const [pathEstimateError, setPathEstimateError] = useState('');
+  // Availability calendar
+  const [calendar, setCalendar] = useState([]);
+  const [selectedWeek, setSelectedWeek] = useState(null); // YYYY-MM-DD of chosen week
+  // Platform fee state
+  const [feeInfo, setFeeInfo] = useState(null); // { feePercent, feeAmount, farmerAmount }
 
   const loadReviews = useCallback(async () => {
     try { const res = await api.getProductReviews(id); setReviews(res.data ?? []); }
@@ -97,6 +120,13 @@ export default function ProductDetail() {
       if (imgs.length > 0) setActiveImg(0);
     }).catch(() => {});
     api.getProductTiers(id).then(res => setTiers(res.data ?? [])).catch(() => setTiers([]));
+    api.getCalendar(id).then(res => {
+      const weeks = res.data ?? [];
+      setCalendar(weeks);
+      // Default to first available week
+      const first = weeks.find(w => w.available);
+      if (first) setSelectedWeek(first.week_start);
+    }).catch(() => {});
   }, [id, loadReviews, navigate]);
 
   useEffect(() => {
@@ -124,6 +154,32 @@ export default function ProductDetail() {
     }).catch(() => {});
   }, [id, user]);
 
+  // Load buyer's non-XLM assets for path payment selector
+  useEffect(() => {
+    if (user?.role !== 'buyer') return;
+    api.getWalletAssets().then(res => setBuyerAssets(res.data ?? [])).catch(() => {});
+  }, [user]);
+
+  // Fetch path estimate whenever source asset or total changes
+  useEffect(() => {
+    if (!sourceAsset || !product) return;
+    setPathEstimate(null);
+    setPathEstimateError('');
+    const destAmount = couponResult ? couponResult.final_total : product.price * qty;
+    if (!destAmount || destAmount <= 0) return;
+    setPathEstimateLoading(true);
+    api.getPathEstimate({
+      source_code: sourceAsset.asset_code,
+      source_issuer: sourceAsset.asset_issuer,
+      dest_amount: parseFloat(destAmount).toFixed(7),
+    }).then(res => {
+      setPathEstimate({ sourceAmount: res.sourceAmount, sourceCode: res.sourceCode });
+      setPathEstimateError('');
+    }).catch(e => {
+      setPathEstimateError(e.message?.includes('No payment path') ? `No path found from ${sourceAsset.asset_code} to XLM` : e.message);
+    }).finally(() => setPathEstimateLoading(false));
+  }, [sourceAsset, qty, couponResult, product]);
+
   if (!product) return <Spinner />;
 
   // Get the best matching tier price for the current quantity
@@ -141,6 +197,13 @@ export default function ProductDetail() {
   const unitPrice = getTierPrice(qty);
   const subtotal = (unitPrice * qty).toFixed(2);
   const total = couponResult ? couponResult.final_total.toFixed(2) : subtotal;
+
+  // Fetch fee info whenever total changes
+  const totalNum = parseFloat(total);
+  React.useEffect(() => {
+    if (!totalNum) return;
+    api.getFeePreview(totalNum).then(r => setFeeInfo(r)).catch(() => setFeeInfo(null));
+  }, [total]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleApplyCoupon() {
     if (!couponCode.trim()) return;
@@ -161,6 +224,8 @@ export default function ProductDetail() {
     if (!user) return navigate('/login');
     if (user.role === 'farmer') return setError(t('productDetail.farmersCannotOrder'));
     if (addresses.length > 0 && !selectedAddressId) return setError(t('productDetail.selectAddress'));
+    if (sourceAsset && pathEstimateError) return setError(pathEstimateError);
+    if (sourceAsset && !pathEstimate) return setError('Waiting for path estimate...');
     setLoading(true);
     setError('');
     try {
@@ -169,6 +234,7 @@ export default function ProductDetail() {
         quantity: qty,
         address_id: selectedAddressId || undefined,
         coupon_code: couponResult ? couponCode.trim() : undefined,
+        source_asset: sourceAsset ? { code: sourceAsset.asset_code, issuer: sourceAsset.asset_issuer } : undefined,
       });
       if (useEscrow) {
         const escrowRes = await api.fundEscrow(res.orderId);
@@ -223,6 +289,9 @@ export default function ProductDetail() {
               <>
                 <strong>{t('productDetail.paymentSuccess')}</strong>
                 <p style={{ marginTop: 8, fontSize: 14 }}>{t('productDetail.orderInfo', { id: result.orderId, price: result.totalPrice })}</p>
+                {result.sourceAsset && result.sourceAsset !== 'XLM' && (
+                  <p style={{ marginTop: 4, fontSize: 13, color: '#555' }}>Paid via path payment using <strong>{result.sourceAsset}</strong></p>
+                )}
                 <p style={{ marginTop: 4, fontSize: 12, wordBreak: 'break-all', color: '#555' }}>TX: {result.txHash}</p>
               </>
             )}
@@ -463,8 +532,81 @@ export default function ProductDetail() {
           ) : (
             <>Total: <strong>{total} XLM</strong></>
           )}
+          {feeInfo && feeInfo.feeAmount > 0 && (
+            <div style={{ marginTop: 8, fontSize: 12, color: '#888', borderTop: '1px solid #e0e0e0', paddingTop: 6 }}>
+              <div>Subtotal: {total} XLM</div>
+              <div>Platform fee ({feeInfo.feePercent}%): −{feeInfo.feeAmount.toFixed(7)} XLM</div>
+              <div style={{ fontWeight: 600, color: '#2d6a4f' }}>Farmer receives: {feeInfo.farmerAmount.toFixed(7)} XLM</div>
+            </div>
+          )}
         </div>
+
+        {/* Path payment asset selector */}
+        {user?.role === 'buyer' && product.quantity > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <label style={s.label}>Pay with</label>
+            <select
+              style={s.select}
+              value={sourceAsset ? `${sourceAsset.asset_code}:${sourceAsset.asset_issuer}` : 'XLM'}
+              onChange={e => {
+                setPathEstimate(null);
+                setPathEstimateError('');
+                if (e.target.value === 'XLM') {
+                  setSourceAsset(null);
+                } else {
+                  const found = buyerAssets.find(a => `${a.asset_code}:${a.asset_issuer}` === e.target.value);
+                  setSourceAsset(found || null);
+                }
+              }}
+            >
+              <option value="XLM">XLM (default)</option>
+              {buyerAssets.map(a => (
+                <option key={`${a.asset_code}:${a.asset_issuer}`} value={`${a.asset_code}:${a.asset_issuer}`}>
+                  {a.asset_code} (balance: {a.balance.toFixed(2)})
+                </option>
+              ))}
+            </select>
+            {sourceAsset && (
+              <div style={{ fontSize: 13, marginTop: 6 }}>
+                {pathEstimateLoading && <span style={{ color: '#888' }}>Estimating path...</span>}
+                {pathEstimateError && <span style={{ color: '#c0392b' }}>{pathEstimateError}</span>}
+                {pathEstimate && !pathEstimateError && (
+                  <span style={{ color: '#2d6a4f', fontWeight: 600 }}>
+                    Estimated cost: ~{pathEstimate.sourceAmount.toFixed(4)} {pathEstimate.sourceCode}
+                    <span style={{ color: '#888', fontWeight: 400 }}> (farmer receives {total} XLM)</span>
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
         {error && <div style={s.err}>{error}</div>}
+
+        {/* Availability Calendar */}
+        {calendar.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: '#333', marginBottom: 8 }}>📅 Weekly Availability</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {calendar.map(w => (
+                <button
+                  key={w.week_start}
+                  disabled={!w.available}
+                  onClick={() => w.available && setSelectedWeek(w.week_start)}
+                  style={{
+                    padding: '5px 10px', borderRadius: 6, fontSize: 12, cursor: w.available ? 'pointer' : 'not-allowed',
+                    border: selectedWeek === w.week_start ? '2px solid #2d6a4f' : '1px solid #ddd',
+                    background: !w.available ? '#f5f5f5' : selectedWeek === w.week_start ? '#d8f3dc' : '#fff',
+                    color: !w.available ? '#bbb' : '#333',
+                    fontWeight: selectedWeek === w.week_start ? 700 : 400,
+                  }}
+                >
+                  {w.available ? '' : '✗ '}{new Date(w.week_start + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                </button>
+              ))}
+            </div>
+            {selectedWeek && <div style={{ fontSize: 12, color: '#2d6a4f', marginTop: 4 }}>Week of {selectedWeek} selected</div>}
+          </div>
+        )}
 
         {product.quantity === 0 ? (
           <div>
@@ -484,9 +626,9 @@ export default function ProductDetail() {
               </label>
             )}
             <button style={{ ...s.btn, position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10 }}
-              onClick={handleBuy} disabled={loading}>
+              onClick={handleBuy} disabled={loading || (calendar.length > 0 && selectedWeek && !calendar.find(w => w.week_start === selectedWeek)?.available)}>
               {loading && <div className="spinner-sm" style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
-              {loading ? t('productDetail.processing') : `${useEscrow ? t('productDetail.payToEscrow') : t('productDetail.buyNow')} · ${total} XLM`}
+              {loading ? t('productDetail.processing') : `${useEscrow ? t('productDetail.payToEscrow') : t('productDetail.buyNow')} · ${sourceAsset && pathEstimate ? `~${pathEstimate.sourceAmount.toFixed(4)} ${pathEstimate.sourceCode}` : `${total} XLM`}`}
             </button>
             <style>{`@keyframes spin { to { transform: rotate(360deg); } } .spinner-sm { display: inline-block; }`}</style>
           </>
