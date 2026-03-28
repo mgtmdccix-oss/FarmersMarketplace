@@ -389,4 +389,21 @@ try {
   console.error('[DB] Failed to create bundles tables:', err.message);
 }
 
+// account_alerts table
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS account_alerts (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id    INTEGER NOT NULL,
+      type       TEXT NOT NULL,
+      message    TEXT NOT NULL,
+      read_at    DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+} catch (err) {
+  console.error('[DB] Failed to create account_alerts table:', err.message);
+}
+
 module.exports = db;
