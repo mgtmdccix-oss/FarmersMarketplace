@@ -277,6 +277,25 @@ try {
   console.error('[DB] Failed to create stock_alerts table:', err.message);
 }
 
+// Subscriptions table
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS subscriptions (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      buyer_id      INTEGER NOT NULL,
+      product_id    INTEGER NOT NULL,
+      quantity      INTEGER NOT NULL,
+      frequency     TEXT NOT NULL CHECK(frequency IN ('weekly', 'biweekly', 'monthly')),
+      next_order_at DATETIME NOT NULL,
+      active        INTEGER NOT NULL DEFAULT 1,
+      status        TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'cancelled')),
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (buyer_id)   REFERENCES users(id)    ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+    );
+  `);
+} catch (err) {
+  console.error('[DB] Failed to create subscriptions table:', err.message);
 // Bundles tables
 try {
   db.exec(`

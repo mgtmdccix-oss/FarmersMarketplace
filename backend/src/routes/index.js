@@ -74,6 +74,17 @@ router.use('/api/v1',          require('./reviews'));
 router.use('/api/v1/favorites', require('./favorites'));
 
 // Non-versioned routes
+router.use('/api/auth',          require('./auth'));
+router.use('/api/products',      require('./products'));
+router.use('/api/orders',        require('./orders'));
+router.use('/api/subscriptions', require('./subscriptions').router);
+router.use('/api/wallet',        require('./wallet'));
+router.use('/api/analytics',     require('./analytics'));
+router.use('/api/admin',         require('./admin'));
+router.use('/api/farmers',       require('./farmers'));
+router.use('/api/rates',         require('./rates'));
+router.use('/api',               require('./reviews'));
+router.use('/api/favorites',     require('./favorites'));
 router.use('/api/auth',      require('./auth'));
 router.use('/api/products',  require('./products'));
 router.use('/api/orders',    require('./orders'));

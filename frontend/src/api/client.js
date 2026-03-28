@@ -268,4 +268,11 @@ export const api = {
       method: "PATCH",
       body: { order },
     }),
+
+  // Subscriptions
+  getSubscriptions: () => request('/subscriptions'),
+  createSubscription: (body) => request('/subscriptions', { method: 'POST', body }),
+  cancelSubscription: (id) => request(`/subscriptions/${id}`, { method: 'DELETE' }),
+  pauseSubscription: (id) => request(`/subscriptions/${id}/pause`, { method: 'PATCH' }),
+  resumeSubscription: (id) => request(`/subscriptions/${id}/resume`, { method: 'PATCH' }),
 };
