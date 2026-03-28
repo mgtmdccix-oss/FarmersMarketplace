@@ -269,8 +269,15 @@ try {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       UNIQUE(user_id, product_id),
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
-    )`,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE    )`,
+    `CREATE TABLE IF NOT EXISTS price_tiers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      product_id INTEGER NOT NULL,
+      min_quantity INTEGER NOT NULL CHECK(min_quantity > 0),
+      price_per_unit REAL NOT NULL CHECK(price_per_unit > 0),
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE,
+      UNIQUE(product_id, min_quantity)    )`,
     `CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
       name, description, content='products', content_rowid='id'
     )`,

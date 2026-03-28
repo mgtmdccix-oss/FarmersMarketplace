@@ -882,4 +882,54 @@ router.patch('/:id/images/reorder', auth, async (req, res) => {
   res.json({ success: true, data: images });
 });
 
+// GET /api/products/:id/tiers - get price tiers for a product
+router.get('/:id/tiers', async (req, res) => {
+  const { rows } = await db.query(
+    'SELECT id, min_quantity, price_per_unit FROM price_tiers WHERE product_id = $1 ORDER BY min_quantity ASC',
+    [req.params.id]
+  );
+  res.json({ success: true, data: rows });
+});
+
+// POST /api/products/:id/tiers - add/update price tiers (farmer only)
+router.post('/:id/tiers', auth, async (req, res) => {
+  if (req.user.role !== 'farmer') return err(res, 403, 'Only farmers can manage price tiers', 'forbidden');
+
+  const { rows } = await db.query('SELECT * FROM products WHERE id = $1 AND farmer_id = $2', [req.params.id, req.user.id]);
+  if (!rows[0]) return err(res, 404, 'Product not found or not yours', 'not_found');
+
+  const { tiers } = req.body;
+  if (!Array.isArray(tiers)) return err(res, 400, 'tiers must be an array', 'validation_error');
+
+  // Validate tiers
+  const sortedTiers = tiers.sort((a, b) => a.min_quantity - b.min_quantity);
+  for (let i = 0; i < sortedTiers.length; i++) {
+    const tier = sortedTiers[i];
+    if (!tier.min_quantity || tier.min_quantity < 1 || !Number.isInteger(tier.min_quantity)) {
+      return err(res, 400, 'min_quantity must be a positive integer', 'validation_error');
+    }
+    if (!tier.price_per_unit || tier.price_per_unit <= 0) {
+      return err(res, 400, 'price_per_unit must be a positive number', 'validation_error');
+    }
+    if (i > 0 && tier.min_quantity <= sortedTiers[i-1].min_quantity) {
+      return err(res, 400, 'min_quantity values must be increasing', 'validation_error');
+    }
+  }
+
+  // Delete existing tiers and insert new ones
+  await db.query('DELETE FROM price_tiers WHERE product_id = $1', [req.params.id]);
+  for (const tier of sortedTiers) {
+    await db.query(
+      'INSERT INTO price_tiers (product_id, min_quantity, price_per_unit) VALUES ($1, $2, $3)',
+      [req.params.id, tier.min_quantity, tier.price_per_unit]
+    );
+  }
+
+  const { rows: newTiers } = await db.query(
+    'SELECT id, min_quantity, price_per_unit FROM price_tiers WHERE product_id = $1 ORDER BY min_quantity ASC',
+    [req.params.id]
+  );
+  res.json({ success: true, data: newTiers });
+});
+
 module.exports = router;
