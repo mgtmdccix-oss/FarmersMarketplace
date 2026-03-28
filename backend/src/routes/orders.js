@@ -9,6 +9,7 @@ const {
   createClaimableBalance,
   createPreorderClaimableBalance,
   claimBalance,
+  mintRewardTokens,
   invokeEscrowContract,
 } = require('../utils/stellar');
 const {
@@ -436,6 +437,13 @@ router.post('/', auth, validate.order, async (req, res) => {
     const { rows: fRows } = await db.query('SELECT id, name, email, stellar_public_key FROM users WHERE id = $1', [product.farmer_id]);
     sendOrderEmails({ order: { id: orderId, quantity, total_price: totalPrice, stellar_tx_hash: txHash }, product, buyer, farmer: fRows[0] })
       .catch(e => console.error('Email notification failed:', e.message));
+
+    // Mint reward tokens (1 token per 1 XLM spent)
+    const rewardAmount = Math.floor(totalPrice);
+    if (rewardAmount > 0 && buyer.stellar_public_key) {
+      mintRewardTokens(buyer.stellar_public_key, rewardAmount)
+        .catch(e => console.error('[Rewards] Failed to mint tokens:', e.message));
+    }
 
     // Low-stock check
     const { rows: updRows } = await db.query('SELECT quantity, low_stock_threshold, low_stock_alerted FROM products WHERE id = $1', [product_id]);
