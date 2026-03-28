@@ -347,6 +347,9 @@ export const api = {
   pauseSubscription: (id) => request(`/subscriptions/${id}/pause`, { method: 'PATCH' }),
   resumeSubscription: (id) => request(`/subscriptions/${id}/resume`, { method: 'PATCH' }),
 
+  // Product import (AgroAPI / JSON)
+  importProductsPreview: (products) => request('/products/import', { method: 'POST', body: { products } }),
+  importProductsConfirm: (products) => request('/products/import/confirm', { method: 'POST', body: { products } }),
   // Seed phrase backup & recovery
   getSeedPhrase: (password) => request('/auth/seed-phrase', { method: 'POST', body: { password } }),
   recoverAccount: (body) => request('/auth/recover', { method: 'POST', body }),
