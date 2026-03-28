@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '../context/ThemeContext';
+import { useTranslation } from 'react-i18next';
 
 const s = {
   nav: { background: '#2d6a4f', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
@@ -48,6 +49,15 @@ export default function Navbar() {
             <Link to="/register" style={s.link} onClick={() => setOpen(false)}>Register</Link>
           </>
         )}
+        <select
+          style={s.langSelect}
+          value={i18n.language}
+          onChange={e => i18n.changeLanguage(e.target.value)}
+          aria-label="Select language"
+        >
+          <option value="en">EN</option>
+          <option value="sw">SW</option>
+        </select>
       </div>
     </nav>
   );
