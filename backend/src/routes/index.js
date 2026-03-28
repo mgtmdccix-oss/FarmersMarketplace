@@ -54,6 +54,7 @@ router.use('/api/products',      require('./products'));
 router.use('/api/orders',        require('./orders'));
 router.use('/api/wallet',        require('./alerts'));
 router.use('/api/wallet',        require('./wallet'));
+router.use('/api/cooperatives',  require('./cooperatives'));
 router.use('/api/analytics',     require('./analytics'));
 router.use('/api/admin',         require('./admin'));
 router.use('/api/farmers',       require('./farmers'));

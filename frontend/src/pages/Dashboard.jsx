@@ -125,6 +125,11 @@ export default function Dashboard() {
   const [couponForm, setCouponForm] = useState({ code: '', discount_type: 'percent', discount_value: '', max_uses: '', expires_at: '' });
   const [couponMsg, setCouponMsg] = useState(null);
 
+  // Cooperative / multisig state
+  const [cooperatives, setCooperatives] = useState([]);
+  const [pendingTxs, setPendingTxs] = useState([]);
+  const [signingTxId, setSigningTxId] = useState(null);
+
   async function openGallery(productId) {
     setGalleryProductId(productId);
     setGalleryErr('');
@@ -242,19 +247,28 @@ export default function Dashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [productsRes, salesRes, profileRes, bundlesRes, couponsRes] = await Promise.all([
+      const [productsRes, salesRes, profileRes, bundlesRes, couponsRes, coopsRes] = await Promise.all([
         api.getMyProducts().catch(() => ({ data: [] })),
         api.getSales().catch(() => ({ data: [] })),
         user?.id ? api.getFarmer(user.id).catch(() => ({})) : Promise.resolve({}),
         api.getBundles().catch(() => ({ data: [] })),
         api.getMyCoupons().catch(() => ({ data: [] })),
+        api.getCooperatives().catch(() => ({ data: [] })),
       ]);
-      
+
       setProducts(productsRes.data ?? productsRes);
       setSales(salesRes.data ?? salesRes);
       setBundles((bundlesRes.data ?? []).filter(b => b.farmer_id === user?.id));
       setCoupons(couponsRes.data ?? []);
-      
+      const coops = coopsRes.data ?? [];
+      setCooperatives(coops);
+
+      // Load pending transactions for all cooperatives
+      const allPending = await Promise.all(
+        coops.map(c => api.getPendingTxs(c.id).then(r => (r.data ?? []).map(t => ({ ...t, coopName: c.name }))).catch(() => []))
+      );
+      setPendingTxs(allPending.flat().filter(t => t.status === 'pending' && !t.alreadySigned));
+
       if (profileRes.data) {
         const d = profileRes.data;
         setProfile({ bio: d.bio || '', location: d.location || '', avatar_url: d.avatar_url || '', federation_name: d.federation_name || '', latitude: d.latitude ?? '', longitude: d.longitude ?? '', farm_address: d.farm_address || '' });
@@ -1122,6 +1136,43 @@ export default function Dashboard() {
           })
         )}
       </div>
+
+      {/* Pending Multi-sig Signature Requests */}
+      {pendingTxs.length > 0 && (
+        <div style={{ ...s.card, border: '1px solid #f9a825', background: '#fffde7' }}>
+          <div style={{ fontSize: 16, fontWeight: 700, color: '#e65100', marginBottom: 12 }}>
+            🔏 Pending Signature Requests ({pendingTxs.length})
+          </div>
+          {pendingTxs.map(tx => (
+            <div key={tx.id} style={{ borderBottom: '1px solid #ffe082', padding: '10px 0', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <div>
+                <div style={{ fontWeight: 600, fontSize: 14 }}>{tx.coopName} — {tx.amount} XLM</div>
+                <div style={{ fontSize: 12, color: '#888' }}>To: {tx.destination?.slice(0, 12)}… · {tx.signatures.length} signature(s) collected</div>
+                <div style={{ fontSize: 11, color: '#aaa' }}>Expires: {new Date(tx.expires_at).toLocaleString()}</div>
+              </div>
+              <button
+                style={{ ...s.btn, fontSize: 13, padding: '6px 14px', background: signingTxId === tx.id ? '#888' : '#2d6a4f' }}
+                disabled={signingTxId === tx.id}
+                onClick={async () => {
+                  setSigningTxId(tx.id);
+                  try {
+                    const res = await api.signPendingTx(tx.id);
+                    if (res.submitted) alert(`✅ Transaction submitted! TX: ${res.txHash}`);
+                    else alert(`Signature added (${res.signaturesCollected}/${res.required} required)`);
+                    load();
+                  } catch (e) {
+                    alert(`Error: ${e.message}`);
+                  } finally {
+                    setSigningTxId(null);
+                  }
+                }}
+              >
+                {signingTxId === tx.id ? 'Signing…' : '✍️ Sign'}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* QR Code Modal */}
       {qrProductId && (
