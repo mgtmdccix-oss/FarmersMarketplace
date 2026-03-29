@@ -1,7 +1,9 @@
 const app = require('./app');
 const { startSubscriptionJob } = require('./jobs/processSubscriptions');
+const { startFreshnessJob } = require('./jobs/processFreshnessAlerts');
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Backend running on http://localhost:${PORT}`);
   startSubscriptionJob();
+  startFreshnessJob();
 });

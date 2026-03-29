@@ -89,6 +89,7 @@ router.get('/', (req, res) => {
   const dataParams = [];
 
   if (available === 'true') conditions.push('p.quantity > 0');
+  conditions.push('(p.best_before IS NULL OR p.best_before >= date(\'now\'))');
 
   if (category) {
     conditions.push('p.category = ?');
@@ -136,6 +137,7 @@ router.get('/', async (req, res) => {
   const params = [];
 
   if (available === 'true') conditions.push('p.quantity > 0');
+  conditions.push(`p.best_before IS NULL OR p.best_before >= CURRENT_DATE`);
   if (category)   { conditions.push(`p.category = $${params.length + 1}`);        params.push(category); }
   if (minPrice !== undefined) { const min = parseFloat(minPrice); if (!isNaN(min)) { conditions.push(`p.price >= $${params.length + 1}`); params.push(min); } }
   if (maxPrice !== undefined) { const max = parseFloat(maxPrice); if (!isNaN(max)) { conditions.push(`p.price <= $${params.length + 1}`); params.push(max); } }
@@ -488,7 +490,7 @@ router.get('/:id/alert/status', auth, async (req, res) => {
 router.post('/', auth, validate.product, (req, res) => {
   if (req.user.role !== 'farmer') return err(res, 403, 'Only farmers can list products', 'forbidden');
 
-  const { name, description, unit, category, image_url } = req.body;
+  const { name, description, unit, category, image_url, harvest_date, best_before } = req.body;
   const price = parseFloat(req.body.price);
   const quantity = parseInt(req.body.quantity, 10);
 
@@ -510,7 +512,7 @@ router.post('/', auth, validate.product, (req, res) => {
       : null;
 
   const result = db.prepare(
-    'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, is_preorder, preorder_delivery_date, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, harvest_date, best_before, is_preorder, preorder_delivery_date, low_stock_threshold) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     req.user.id,
     safeName,
@@ -520,6 +522,8 @@ router.post('/', auth, validate.product, (req, res) => {
     quantity,
     safeUnit,
     safeImageUrl,
+    harvest_date || null,
+    best_before || null,
     preorder.isPreorder ? 1 : 0,
     preorder.preorderDeliveryDate,
     parseInt(req.body.low_stock_threshold, 10) || 5,
@@ -545,13 +549,15 @@ router.patch('/:id', auth, (req, res) => {
     'low_stock_threshold',
     'is_preorder',
     'preorder_delivery_date',
+    'harvest_date',
+    'best_before',
   ];
 
 // POST /api/products
 router.post('/', auth, validate.product, async (req, res) => {
   if (req.user.role !== 'farmer') return err(res, 403, 'Only farmers can list products', 'forbidden');
 
-  const { name, description, unit, category, image_url } = req.body;
+  const { name, description, unit, category, image_url, harvest_date, best_before } = req.body;
   const price    = parseFloat(req.body.price);
   const quantity = parseInt(req.body.quantity, 10);
 
@@ -566,8 +572,8 @@ router.post('/', auth, validate.product, async (req, res) => {
   const safeImageUrl    = image_url && /^\/uploads\/[a-f0-9]+\.(jpg|jpeg|png|webp)$/i.test(image_url) ? image_url : null;
 
   const { rows } = await db.query(
-    'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, low_stock_threshold) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id',
-    [req.user.id, safeName, safeDescription, safeCategory, price, quantity, safeUnit, safeImageUrl, parseInt(req.body.low_stock_threshold) || 5]
+    'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, harvest_date, best_before, low_stock_threshold) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id',
+    [req.user.id, safeName, safeDescription, safeCategory, price, quantity, safeUnit, safeImageUrl, harvest_date || null, best_before || null, parseInt(req.body.low_stock_threshold) || 5]
   );
   res.json({ success: true, id: rows[0].id, message: 'Product listed' });
 });
@@ -580,7 +586,7 @@ router.patch('/:id', auth, async (req, res) => {
   const product = rows[0];
   if (!product) return err(res, 404, 'Not found or not yours', 'not_found');
 
-  const allowed = ['name', 'description', 'price', 'quantity', 'unit', 'category', 'low_stock_threshold'];
+  const allowed = ['name', 'description', 'price', 'quantity', 'unit', 'category', 'low_stock_threshold', 'harvest_date', 'best_before'];
   const updates = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
