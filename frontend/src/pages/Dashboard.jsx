@@ -43,6 +43,8 @@ const EMPTY_FORM = {
     fiber: '',
     vitamins: {},
   },
+  harvest_date: '',
+  best_before: '',
 };
 
 import { useAuth } from '../context/AuthContext';
@@ -872,6 +874,22 @@ export default function Dashboard() {
                 )}
               </>
             )}
+
+            <label style={s.label}>Harvest Date (optional)</label>
+            <input
+              style={s.input}
+              type="date"
+              value={form.harvest_date}
+              onChange={e => setForm({ ...form, harvest_date: e.target.value })}
+            />
+
+            <label style={s.label}>Best Before Date (optional)</label>
+            <input
+              style={s.input}
+              type="date"
+              value={form.best_before}
+              onChange={e => setForm({ ...form, best_before: e.target.value })}
+            />
 
             {/* Image upload */}
             <label style={s.label}>{t('dashboard.productImage')} <span style={{ color: '#aaa', fontWeight: 400 }}>{t('dashboard.imageHint')}</span></label>

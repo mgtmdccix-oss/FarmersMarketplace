@@ -79,6 +79,9 @@ export default function ProductDetail() {
   const [confirming, setConfirming] = useState(null); // { orderId, startedAt }
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
+  const [paymentLinkData, setPaymentLinkData] = useState(null);
+  const [paymentLinkLoading, setPaymentLinkLoading] = useState(false);
+  const [paymentLinkError, setPaymentLinkError] = useState('');
   const { usd } = useXlmRate();
   const [addresses, setAddresses] = useState([]);
   const [selectedAddressId, setSelectedAddressId] = useState(null);
@@ -364,6 +367,36 @@ export default function ProductDetail() {
       setError(getErrorMessage(e));
     } finally {
       setWalletLoading(false);
+    }
+  }
+
+  async function handleGeneratePaymentLink() {
+    if (!user) return navigate('/login');
+    if (user.role === 'farmer') return setPaymentLinkError(t('productDetail.farmersCannotOrder'));
+    if (addresses.length > 0 && !selectedAddressId) return setPaymentLinkError(t('productDetail.selectAddress'));
+
+    setPaymentLinkLoading(true);
+    setPaymentLinkError('');
+    setPaymentLinkData(null);
+
+    try {
+      const createRes = await api.placeOrder({
+        product_id: product.id,
+        quantity: qty,
+        address_id: selectedAddressId || undefined,
+        coupon_code: couponResult ? couponCode.trim() : undefined,
+        payment_method: 'sep7',
+      });
+
+      const linkRes = await api.getOrderPaymentLink(createRes.orderId);
+      setPaymentLinkData({
+        orderId: createRes.orderId,
+        ...linkRes,
+      });
+    } catch (e) {
+      setPaymentLinkError(getStellarErrorMessage(e) || getErrorMessage(e));
+    } finally {
+      setPaymentLinkLoading(false);
     }
   }
 
@@ -747,6 +780,16 @@ export default function ProductDetail() {
             </span>
           )}
         </div>
+        {product.harvest_date && (
+          <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>
+            Harvested: {new Date(product.harvest_date).toLocaleDateString()}
+          </div>
+        )}
+        {product.best_before && (
+          <div style={{ fontSize: 13, color: '#888', marginBottom: 4 }}>
+            Best before: {new Date(product.best_before).toLocaleDateString()}
+          </div>
+        )}
 
         {product.pricing_type === 'weight' ? (
           <div style={{ marginBottom: 20 }}>
@@ -941,11 +984,35 @@ export default function ProductDetail() {
               {loading && <div className="spinner-sm" style={{ width: 16, height: 16, border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />}
               {loading ? t('productDetail.processing') : `${useEscrow ? t('productDetail.payToEscrow') : t('productDetail.buyNow')} · ${sourceAsset && pathEstimate ? `~${pathEstimate.sourceAmount.toFixed(4)} ${pathEstimate.sourceCode}` : `${total} XLM`}`}
             </button>
-            
             {user?.role === 'buyer' && (
               <button style={{ ...s.btn, background: '#1e40af', marginBottom: 12 }} onClick={handleWalletPay} disabled={walletLoading || product.quantity === 0}>
                 {walletLoading ? '...' : `💳 Pay with Stellar Wallet · ${total} XLM`}
               </button>
+            )}
+            <button style={{ ...s.btn, marginTop: 12, background: '#006d77', fontSize: 14 }} onClick={handleGeneratePaymentLink} disabled={paymentLinkLoading || loading}>
+              {paymentLinkLoading ? '...' : 'Pay with Stellar Wallet (SEP-0007)'}
+            </button>
+            {paymentLinkError && <div style={{ ...s.err, marginTop: 8 }}>{paymentLinkError}</div>}
+            {paymentLinkData && (
+              <div style={{ marginTop: 16, padding: 12, border: '1px solid #ddd', borderRadius: 8, background: '#f9fff9' }}>
+                <div style={{ marginBottom: 8, fontWeight: 600 }}>SEP-0007 Payment Link</div>
+                <a href={paymentLinkData.paymentLink} target="_blank" rel="noreferrer" style={{ wordBreak: 'break-all', color: '#1b4332' }}>
+                  {paymentLinkData.paymentLink}
+                </a>
+                <div style={{ marginTop: 8, fontSize: 12, color: '#555' }}>
+                  Expires at: {new Date(paymentLinkData.expiresAt).toLocaleString()}
+                </div>
+                <div style={{ marginTop: 12 }}>
+                  <img
+                    src={api.getOrderPaymentLinkQr(paymentLinkData.orderId)}
+                    alt="Payment link QR"
+                    style={{ width: 220, height: 220, borderRadius: 10, border: '1px solid #e0e0e0' }}
+                  />
+                </div>
+                <button style={{ ...s.btnSm, marginTop: 8 }} onClick={() => navigator.clipboard.writeText(paymentLinkData.paymentLink)}>
+                  Copy payment link
+                </button>
+              </div>
             )}
             <style>{`@keyframes spin { to { transform: rotate(360deg); } } .spinner-sm { display: inline-block; }`}</style>
           </>

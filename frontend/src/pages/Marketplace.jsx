@@ -262,6 +262,20 @@ const EMPTY_FILTERS = {
   excludeAllergens: [],
 };
 
+function getFreshnessBadge(bestBefore) {
+  if (!bestBefore) return null;
+  const today = new Date();
+  const expiry = new Date(bestBefore);
+  const diffTime = expiry - today;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return null; // expired, but shouldn't be shown
+  if (diffDays === 0) return { text: 'Expires today', color: '#ff6b6b' };
+  if (diffDays === 1) return { text: 'Expires tomorrow', color: '#ffa726' };
+  if (diffDays <= 3) return { text: `${diffDays} days left`, color: '#ffb74d' };
+  if (diffDays <= 7) return { text: `${diffDays} days left`, color: '#81c784' };
+  return { text: 'Fresh', color: '#4caf50' };
+}
+
 export default function Marketplace() {
   const { t } = useTranslation();
   const [products, setProducts] = useState([]);
