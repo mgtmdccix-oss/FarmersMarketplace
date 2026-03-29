@@ -154,6 +154,7 @@ export const api = {
     return request(`/products/${productId}/video`, { method: 'POST', body: form });
   },
   getProductImages: (productId) => request(`/products/${productId}/images`),
+  getRecommendations: () => request('/recommendations'),
   uploadProductImages: (productId, files) => {
     const form = new FormData();
     files.forEach((f) => form.append('images', f));
