@@ -27,6 +27,48 @@ router.get("/", auth, async (req, res) => {
     "SELECT stellar_public_key, referral_code FROM users WHERE id = $1",
     [req.user.id],
   );
+const router = require('express').Router();
+const jwt = require('jsonwebtoken');
+const db = require('../db/schema');
+const auth = require('../middleware/auth');
+const validate = require('../middleware/validate');
+const { getBalance, getTransactions, fundTestnetAccount, sendPayment, server } = require('../utils/stellar');
+const stellar = require('../utils/stellar');
+const { getBalance, getAllBalances, getTransactions, fundTestnetAccount, sendPayment, addTrustline, removeTrustline } = stellar;
+const { lookupFederationAddress } = stellar;
+const { err } = require('../middleware/error');
+
+/**
+ * @swagger
+ * tags:
+ *   name: Wallet
+ *   description: Stellar wallet operations
+ */
+
+/**
+ * @swagger
+ * /api/wallet:
+ *   get:
+ *     summary: Get wallet balance and public key
+ *     tags: [Wallet]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Wallet info
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 publicKey: { type: string }
+ *                 balance: { type: number, description: XLM balance }
+ *                 referralCode: { type: string }
+ */
+// GET /api/wallet
+router.get('/', auth, async (req, res) => {
+  const { rows } = await db.query('SELECT stellar_public_key, referral_code FROM users WHERE id = $1', [req.user.id]);
   const user = rows[0];
   if (!user) return err(res, 404, "User not found", "user_not_found");
 
@@ -54,7 +96,21 @@ router.get("/transactions", auth, async (req, res) => {
   if (!rows[0]) return err(res, 404, "User not found", "user_not_found");
 
   const txs = await getTransactions(rows[0].stellar_public_key);
-  res.json({ success: true, data: txs });
+
+  // Enrich each tx with federation addresses (failures are silently ignored)
+  const enriched = await Promise.all(txs.map(async (tx) => {
+    const [fromFederation, toFederation] = await Promise.all([
+      lookupFederationAddress(tx.from),
+      lookupFederationAddress(tx.to),
+    ]);
+    return {
+      ...tx,
+      from_federation: fromFederation || null,
+      to_federation: toFederation || null,
+    };
+  }));
+
+  res.json({ success: true, data: enriched });
 });
 
 router.post("/fund", auth, async (req, res) => {

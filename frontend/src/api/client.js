@@ -283,6 +283,9 @@ export const api = {
   fundEscrow: (orderId) => request(`/orders/${orderId}/escrow`, { method: 'POST' }),
   claimEscrow: (orderId) => request(`/orders/${orderId}/claim`, { method: 'POST' }),
   claimPreorder: (orderId) => request(`/orders/${orderId}/claim-preorder`, { method: 'POST' }),
+  fileReturn: (orderId, reason) => request(`/orders/${orderId}/return`, { method: 'POST', body: { reason } }),
+  approveReturn: (orderId) => request(`/orders/${orderId}/return/approve`, { method: 'PATCH' }),
+  rejectReturn: (orderId, reject_reason) => request(`/orders/${orderId}/return/reject`, { method: 'PATCH', body: { reject_reason } }),
   placeOrder: (body, idempotencyKey) => request('/orders', { method: 'POST', body, headers: idempotencyKey ? { 'X-Idempotency-Key': idempotencyKey } : {} }),
   getOrders: (params = {}) => request(`/orders${toQs(params)}`),
   getSales: (params = {}) => request(`/orders/sales${toQs(params)}`),
@@ -374,6 +377,7 @@ export const api = {
   searchProducts: (q) => request(`/products/search?q=${encodeURIComponent(q)}`),
 
   placeOrder: (body) => request('/orders', { method: 'POST', body }),
+  getOrderStatus: (id) => request(`/orders/${id}/status`),
   getOrders: () => request('/orders'),
   getSales: () => request('/orders/sales'),
 
