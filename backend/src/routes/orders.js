@@ -72,7 +72,7 @@ router.get('/fee-preview', (req, res) => {
   res.json({ success: true, total: amount, feePercent: info.feePercent, feeAmount: info.feeAmount, farmerAmount: info.farmerAmount });
 });
 
-// POST /api/orders - buyer places + pays for an order
+// POST /api/orders - buyer places an order; TX submitted async
 router.post('/', auth, validate.order, async (req, res) => {
   if (req.user.role !== 'buyer') {
     return err(res, 403, 'Only buyers can place orders', 'forbidden');
@@ -149,8 +149,6 @@ router.post('/', auth, validate.order, async (req, res) => {
   if (!product_id || Number.isNaN(quantity) || quantity < 1) {
     return err(res, 400, 'product_id and a positive quantity are required', 'validation_error');
   }
-
-  const idempotencyKey = req.headers['x-idempotency-key'];
   if (idempotencyKey) {
     const cached = getCachedResponse(idempotencyKey);
     if (cached) {
@@ -206,9 +204,7 @@ router.post('/', auth, validate.order, async (req, res) => {
     const deducted = db.prepare(
       'UPDATE products SET quantity = quantity - ? WHERE id = ? AND quantity >= ?'
     ).run(qty, productId, qty);
-
     if (deducted.changes === 0) throw new Error('Insufficient stock');
-
     const order = db.prepare(
       'INSERT INTO orders (buyer_id, product_id, quantity, total_price, status, address_id) VALUES (?, ?, ?, ?, ?, ?)'
     ).run(buyerId, productId, qty, total, 'pending', addressId || null);
@@ -233,6 +229,14 @@ router.post('/', auth, validate.order, async (req, res) => {
   if (!pRows[0]) return err(res, 404, 'Product not found', 'not_found');
   const product = pRows[0];
 
+  // Weight validation for weight-based products
+  const weight = req.body.weight ? parseFloat(req.body.weight) : null;
+  if (product.pricing_type === 'weight') {
+    if (!weight || isNaN(weight) || weight <= 0) return err(res, 400, 'weight is required for weight-based products', 'validation_error');
+    if (weight < product.min_weight) return err(res, 400, `weight must be at least ${product.min_weight} ${product.unit}`, 'validation_error');
+    if (weight > product.max_weight) return err(res, 400, `weight cannot exceed ${product.max_weight} ${product.unit}`, 'validation_error');
+  }
+
   const { rows: bRows } = await db.query(
     'SELECT id, name, email, stellar_public_key, stellar_secret_key, referred_by, referral_bonus_sent FROM users WHERE id = $1',
     [req.user.id]
@@ -240,6 +244,9 @@ router.post('/', auth, validate.order, async (req, res) => {
   const buyer = bRows[0];
 
   const subtotal = (isFlashSaleActive(product) ? Number(product.flash_sale_price) : Number(product.price)) * quantity;
+  const subtotal = product.pricing_type === 'weight'
+    ? product.price * weight
+    : product.price * quantity;
   let discount = 0;
   let appliedCoupon = null;
   if (coupon_code) {
@@ -274,8 +281,8 @@ router.post('/', auth, validate.order, async (req, res) => {
   if (rowCount === 0) return err(res, 400, 'Insufficient stock', 'insufficient_stock');
 
   const { rows: oRows } = await db.query(
-    'INSERT INTO orders (buyer_id, product_id, quantity, total_price, status, address_id) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id',
-    [req.user.id, product_id, quantity, totalPrice, 'pending', address_id || null]
+    'INSERT INTO orders (buyer_id, product_id, quantity, total_price, status, address_id, weight) VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id',
+    [req.user.id, product_id, quantity, totalPrice, 'pending', address_id || null, weight || null]
   );
   const orderId = oRows[0].id;
 
@@ -557,11 +564,13 @@ router.get('/', auth, async (req, res) => {
   const { rows: data } = await db.query(
     `SELECT o.*, p.name as product_name, p.unit, u.name as farmer_name,
             a.label as address_label, a.street as address_street, a.city as address_city,
-            a.country as address_country, a.postal_code as address_postal_code
+            a.country as address_country, a.postal_code as address_postal_code,
+            rr.status as return_status, rr.reason as return_reason, rr.reject_reason, rr.refund_tx_hash
      FROM orders o
      JOIN products p ON o.product_id = p.id
      JOIN users u ON p.farmer_id = u.id
      LEFT JOIN addresses a ON o.address_id = a.id
+     LEFT JOIN return_requests rr ON rr.order_id = o.id
      ${where}
      ORDER BY o.created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     [...params, limit, offset]
@@ -637,11 +646,13 @@ router.get('/sales', auth, async (req, res) => {
   const { rows: data } = await db.query(
     `SELECT o.*, p.name as product_name, u.name as buyer_name,
             a.label as address_label, a.street as address_street, a.city as address_city,
-            a.country as address_country, a.postal_code as address_postal_code
+            a.country as address_country, a.postal_code as address_postal_code,
+            rr.status as return_status, rr.reason as return_reason, rr.reject_reason, rr.refund_tx_hash
      FROM orders o
      JOIN products p ON o.product_id = p.id
      JOIN users u ON o.buyer_id = u.id
      LEFT JOIN addresses a ON o.address_id = a.id
+     LEFT JOIN return_requests rr ON rr.order_id = o.id
      WHERE p.farmer_id = ?
      ORDER BY o.created_at DESC LIMIT ? OFFSET ?`
   ).all(req.user.id, limit, offset);
@@ -679,6 +690,7 @@ router.patch('/:id/status', auth, (req, res) => {
   if (!order) return err(res, 404, 'Order not found or not yours', 'not_found');
 
   db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, order.id);
+     LEFT JOIN return_requests rr ON rr.order_id = o.id
      WHERE p.farmer_id = $1
      ORDER BY o.created_at DESC LIMIT $2 OFFSET $3`,
     [req.user.id, limit, offset]
