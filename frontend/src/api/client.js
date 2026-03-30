@@ -232,6 +232,27 @@ export const api = {
   getAddresses: () => request('/addresses'),
 
   placeOrderWithBudgetOverride: (body) => request('/orders', { method: 'POST', body: { ...body, budget_override_confirmed: true } }),
+  // params may include: status, page, limit
+  getOrders:    (params = {})  => request(`/orders${toQs(params)}`),
+  getSales:     (params = {})  => request(`/orders/sales${toQs(params)}`),
+
+  submitReview: (body)         => request('/reviews', { method: 'POST', body }),
+
+  getWallet:      ()           => request('/wallet'),
+  getTransactions: ()          => request('/wallet/transactions'),
+  fundWallet:     ()           => request('/wallet/fund', { method: 'POST' }),
+  sendXLM:        (body)       => request('/wallet/send', { method: 'POST', body }),
+  addTrustline:   (body)       => request('/wallet/trustline', { method: 'POST', body }),
+  removeTrustline:(body)       => request('/wallet/trustline', { method: 'DELETE', body }),
+  getWalletAssets: ()          => request('/wallet/assets'),
+  getPathEstimate: (params)    => request(`/wallet/path-estimate${toQs(params)}`),
+  mergeWallet:    (body)       => request('/wallet/merge', { method: 'POST', body }),
+  deleteAccount:   (force)     => request(`/auth/account${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+  // Returns the SSE URL with the token embedded (EventSource can't set headers)
+  getWalletStreamUrl: ()       => `/api/wallet/stream?token=${encodeURIComponent(accessToken || '')}`,
+  searchProducts: (q) => request(`/products/search?q=${encodeURIComponent(q)}`),
+
+  placeOrder: (body) => request('/orders', { method: 'POST', body }),
   getOrderStatus: (id) => request(`/orders/${id}/status`),
 
   getAuctions: () => request('/auctions'),

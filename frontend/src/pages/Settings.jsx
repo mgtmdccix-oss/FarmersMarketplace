@@ -48,6 +48,40 @@ function SettingsAccountBody() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
 
+  // --- Account merge state ---
+  const [showMergeModal, setShowMergeModal] = useState(false);
+  const [mergeDestination, setMergeDestination]   = useState('');
+  const [mergePassword, setMergePassword]         = useState('');
+  const [merging, setMerging]                     = useState(false);
+  const [mergeError, setMergeError]               = useState('');
+  const [mergeSuccess, setMergeSuccess]           = useState('');
+
+  function openMergeModal() {
+    setMergeDestination('');
+    setMergePassword('');
+    setMergeError('');
+    setMergeSuccess('');
+    setShowMergeModal(true);
+  }
+
+  function closeMergeModal() {
+    if (merging) return;
+    setShowMergeModal(false);
+  }
+
+  async function handleMerge() {
+    setMerging(true);
+    setMergeError('');
+    try {
+      const result = await api.mergeWallet({ destination: mergeDestination, password: mergePassword });
+      setMergeSuccess(`Merge complete. TX: ${result.txHash}`);
+    } catch (e) {
+      setMergeError(e.message || 'Merge failed. Please try again.');
+    } finally {
+      setMerging(false);
+    }
+  }
+
   const [showModal, setShowModal]       = useState(false);
   const [step, setStep]                 = useState('confirm'); // 'confirm' | 'balance_warning'
   const [balanceInfo, setBalanceInfo]   = useState(null); // { balance, publicKey }
@@ -117,7 +151,67 @@ function SettingsAccountBody() {
         </button>
       </div>
 
-      {showModal && (
+      <div style={{ ...s.card, border: '1px solid #ffc107' }}>
+        <div style={s.section}>Wallet Consolidation</div>
+        <div style={s.desc}>
+          Merge this account's Stellar wallet into another address. All XLM will be transferred and the source account will be permanently closed on the ledger. This action is irreversible.
+        </div>
+        <button style={{ ...s.btnDanger, background: '#e67e22' }} onClick={openMergeModal}>
+          Merge Wallet
+        </button>
+      </div>
+
+      {showMergeModal && (
+        <div style={s.overlay} onClick={closeMergeModal} role="dialog" aria-modal="true" aria-labelledby="merge-modal-title">
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <div style={s.modalTitle} id="merge-modal-title">Merge Wallet</div>
+            <div style={s.warning}>
+              <strong>⚠️ This is irreversible.</strong> All XLM will be transferred to the destination and your current Stellar account will be permanently closed.
+            </div>
+            {mergeSuccess ? (
+              <>
+                <div style={{ color: '#2d6a4f', fontSize: 13, background: '#d8f3dc', borderRadius: 6, padding: '10px 12px', wordBreak: 'break-all' }}>{mergeSuccess}</div>
+                <div style={s.row}>
+                  <button style={s.btnGhost} onClick={closeMergeModal}>Close</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label style={s.label}>Destination Stellar address</label>
+                <input
+                  style={s.input}
+                  type="text"
+                  value={mergeDestination}
+                  onChange={e => setMergeDestination(e.target.value)}
+                  placeholder="G..."
+                  autoFocus
+                />
+                <label style={{ ...s.label, marginTop: 12 }}>Confirm your password</label>
+                <input
+                  style={s.input}
+                  type="password"
+                  value={mergePassword}
+                  onChange={e => setMergePassword(e.target.value)}
+                  placeholder="Your account password"
+                />
+                {mergeError && <div style={s.errMsg}>{mergeError}</div>}
+                <div style={s.row}>
+                  <button style={s.btnGhost} onClick={closeMergeModal} disabled={merging}>Cancel</button>
+                  <button
+                    style={{ ...s.btnDanger, background: '#e67e22', opacity: mergeDestination && mergePassword ? 1 : 0.5 }}
+                    disabled={!mergeDestination || !mergePassword || merging}
+                    onClick={handleMerge}
+                  >
+                    {merging ? 'Merging...' : 'Confirm Merge'}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {showModal &&
         <div style={s.overlay} onClick={closeModal} role="dialog" aria-modal="true" aria-labelledby="modal-title">
           <div style={s.modal} onClick={e => e.stopPropagation()}>
 

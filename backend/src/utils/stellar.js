@@ -935,6 +935,39 @@ async function pathPayment({
 }
 
 /**
+ * Merge sourceSecret account into destinationPublicKey.
+ * Transfers all XLM and closes the source account.
+ */
+async function mergeAccount({ sourceSecret, destinationPublicKey }) {
+  const sourceKeypair = StellarSdk.Keypair.fromSecret(sourceSecret);
+
+  // Validate destination exists on ledger
+  try {
+    await server.loadAccount(destinationPublicKey);
+  } catch (e) {
+    if (e.response && e.response.status === 404) {
+      const err = new Error('Destination account does not exist on the ledger');
+      err.code = 'destination_not_found';
+      throw err;
+    }
+    throw e;
+  }
+
+  const sourceAccount = await server.loadAccount(sourceKeypair.publicKey());
+
+  const tx = new StellarSdk.TransactionBuilder(sourceAccount, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(
+      StellarSdk.Operation.accountMerge({ destination: destinationPublicKey }),
+    )
+    .setTimeout(30)
+    .build();
+
+  tx.sign(sourceKeypair);
+  const result = await server.submitTransaction(tx);
+  return result.hash;
  * Fetch and decode Soroban contract events via getEvents RPC.
  * @param {string} contractId - Contract address (base32 or hex)
  * @param {{ type?: string, from?: string, to?: string, page?: number, limit?: number }} filters
@@ -1011,6 +1044,7 @@ module.exports = {
   lookupFederationAddress,
   addTrustline,
   removeTrustline,
+  mergeAccount,
   createClaimableBalance,
   createPreorderClaimableBalance,
   claimBalance,
