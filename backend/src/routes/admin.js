@@ -344,4 +344,98 @@ router.delete('/contracts/:id/acl/:address', async (req, res) => {
   res.json({ success: true, message: 'Access revoked' });
 });
 
+// ── Contract Documentation & Analysis ──────────────────────────────────────
+
+const { getContractABI, analyzeContractFees } = require('../utils/stellar');
+const cache = require('../cache');
+
+// GET /api/admin/contracts/:id/docs - Generate and cache contract ABI documentation
+router.get('/contracts/:id/docs', async (req, res) => {
+  const { rows: reg } = await db.query('SELECT contract_id FROM contracts_registry WHERE id = $1', [req.params.id]);
+  if (!reg[0]) return res.status(404).json({ success: false, error: 'Contract not found' });
+
+  const contractId = reg[0].contract_id;
+  const cacheKey = `contract_abi:${contractId}`;
+
+  // Try cache first
+  let abi = await cache.get(cacheKey);
+  if (abi) {
+    return res.json({ success: true, data: { abi, cached: true } });
+  }
+
+  try {
+    abi = await getContractABI(contractId);
+    
+    // Generate markdown documentation
+    let markdown = `# Contract ABI Documentation\n\n`;
+    markdown += `**Contract ID:** \`${contractId}\`\n\n`;
+    markdown += `## Functions\n\n`;
+
+    if (!abi || abi.length === 0) {
+      markdown += `No functions found in contract specification.\n`;
+    } else {
+      for (const func of abi) {
+        markdown += `### ${func.name}\n\n`;
+        markdown += `**Parameters:**\n`;
+        if (func.params && func.params.length > 0) {
+          for (const param of func.params) {
+            markdown += `- \`${param.name}\` (\`${param.type}\`)\n`;
+          }
+        } else {
+          markdown += `- None\n`;
+        }
+        markdown += `\n**Return Type:** \`${func.returnType}\`\n\n`;
+      }
+    }
+
+    const docs = { abi, markdown, generatedAt: new Date().toISOString() };
+    
+    // Cache for 10 minutes
+    await cache.set(cacheKey, docs, 600);
+
+    res.json({ success: true, data: docs });
+  } catch (error) {
+    if (error.code === 404) {
+      return res.status(404).json({ success: false, error: 'Contract not found on Soroban RPC' });
+    }
+    res.status(502).json({ success: false, error: error.message || 'Failed to fetch contract ABI' });
+  }
+});
+
+// POST /api/admin/contracts/:id/analyze-fees - Analyze contract invocation fees
+router.post('/contracts/:id/analyze-fees', async (req, res) => {
+  const { rows: reg } = await db.query('SELECT contract_id FROM contracts_registry WHERE id = $1', [req.params.id]);
+  if (!reg[0]) return res.status(404).json({ success: false, error: 'Contract not found' });
+
+  const { testCases } = req.body;
+  if (!Array.isArray(testCases) || testCases.length === 0) {
+    return res.status(400).json({ success: false, error: 'testCases must be a non-empty array' });
+  }
+
+  // Validate test cases
+  for (let i = 0; i < testCases.length; i++) {
+    const tc = testCases[i];
+    if (!tc.method || typeof tc.method !== 'string') {
+      return res.status(400).json({ success: false, error: `testCases[${i}].method is required` });
+    }
+    if (!Array.isArray(tc.args)) {
+      return res.status(400).json({ success: false, error: `testCases[${i}].args must be an array` });
+    }
+  }
+
+  try {
+    const analysis = await analyzeContractFees(reg[0].contract_id, testCases);
+    
+    // Highlight expensive operations (> 1M CPU instructions)
+    const results = analysis.map(r => ({
+      ...r,
+      expensive: r.cpu_insns && r.cpu_insns > 1_000_000,
+    }));
+
+    res.json({ success: true, data: results });
+  } catch (error) {
+    res.status(502).json({ success: false, error: error.message || 'Fee analysis failed' });
+  }
+});
+
 module.exports = router;
