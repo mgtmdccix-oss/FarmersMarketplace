@@ -1,18 +1,12 @@
-# Contract State Viewer Implementation Plan
+# SEP-0007 Payment Links Progress
 
-## Status: In Progress
-
-### Completed Steps:
-
-- [x] 1. Create feature branch `feat/contract-state-viewer`
-
-### Pending Steps:
-
-- [x] 2. Extend `backend/src/utils/stellar.js` with Soroban RPC `getContractState(contractId, prefix?)`
-- [x] 3. Create `backend/src/routes/contracts.js` with GET /api/contracts/:contractId/state?prefix=
-- [x] 4. Mount route in `backend/src/routes/index.js`
-- [x] 5. Add admin contract viewer UI to `frontend/src/pages/Dashboard.jsx`
-- [x] 6. Create `backend/tests/contracts.test.js` with mocked RPC tests
-- [x] 7. Update `README.md` with API docs
-- [x] 8. Test backend: `cd backend && npm test` (tests created, some existing passed; new contract tests need auth setup refinement)
-- [x] 9. Verify full flow
+## Plan Steps:
+- [x] 1. Create Git branch `feat/sep0007-payment-links`
+- [ ] 2. Add `generatePaymentLink()` to `backend/src/utils/stellar.js`
+- [ ] 3. Add GET `/api/orders/:id/payment-link` route in `backend/src/routes/orders.js`
+- [ ] 4. Add `getOrderPaymentLink(id)` to `frontend/src/api/client.js`
+- [ ] 5. Update `frontend/src/pages/ProductDetail.jsx` with payment link UI + QR modal
+- [ ] 6. Install `qrcode.react` in frontend
+- [ ] 7. Add tests
+- [ ] 8. Test end-to-end
+- [ ] 9. Commit & PR

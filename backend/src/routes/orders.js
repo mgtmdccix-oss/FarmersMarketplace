@@ -3,6 +3,7 @@ const logger = require('../logger');
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
 const validate = require('../middleware/validate');
+const QRCode = require('qrcode');
 const {
   sendPayment,
   pathPayment,
@@ -15,6 +16,7 @@ const {
   invokeEscrowContract,
   pathPayment,
   getPathPaymentEstimate,
+  generatePaymentLink,
 } = require('../utils/stellar');
 const {
   sendOrderEmails,
@@ -231,6 +233,23 @@ router.post('/', auth, validate.order, async (req, res) => {
     [req.user.id, product_id, quantity, totalPrice, 'pending', address_id || null]
   );
   const orderId = orderRows[0].id;
+
+  if (payment_method === 'sep7') {
+    if (appliedCoupon) {
+      db.prepare('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?').run(appliedCoupon.id);
+    }
+
+    const responseData = {
+      success: true,
+      orderId,
+      status: 'pending',
+      totalPrice,
+      message: 'Order created for SEP-0007 payment',
+    };
+
+    if (idempotencyKey) cacheResponse(idempotencyKey, responseData);
+    return res.json(responseData);
+  }
 
   // 5. Payment Processing
   try {

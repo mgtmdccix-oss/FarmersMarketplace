@@ -187,15 +187,28 @@ async function getTransactions(publicKey) {
   }
 }
 
-module.exports = {
-  isTestnet,
-  server,
-  createWallet,
-  fundTestnetAccount,
-  getBalance,
-  sendPayment,
-  getTransactions,
-};
+function generatePaymentLink({ destination, amount, memo, memoType = 'text', assetCode = 'XLM', assetIssuer }) {
+  if (!destination) throw new Error('destination is required for SEP-0007 link');
+  if (!amount || Number.isNaN(parseFloat(amount))) throw new Error('valid amount is required for SEP-0007 link');
+
+  const url = new URL('web+stellar:pay');
+  url.searchParams.set('destination', destination);
+  url.searchParams.set('amount', Number(amount).toFixed(7));
+
+  if (memo != null) {
+    url.searchParams.set('memo', String(memo));
+    url.searchParams.set('memo_type', memoType);
+  }
+
+  if (assetCode && assetCode.toUpperCase() !== 'XLM') {
+    url.searchParams.set('asset_code', assetCode);
+    if (!assetIssuer) {
+      throw new Error('assetIssuer is required for non-native SEP-0007 assets');
+    }
+    url.searchParams.set('asset_issuer', assetIssuer);
+  }
+
+  return url.toString();
 // In-memory cache: publicKey -> { federationAddress, expiresAt }
 const _federationCache = new Map();
 const FEDERATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -235,8 +248,15 @@ module.exports = {
   getBalance,
   sendPayment,
   getTransactions,
+  generatePaymentLink,
 };
-async function createClaimableBalance({ senderSecret, farmerPublicKey, buyerPublicKey, amount }) {
+
+async function createClaimableBalance({
+  senderSecret,
+  farmerPublicKey,
+  buyerPublicKey,
+  amount,
+}) {
   const senderKeypair = StellarSdk.Keypair.fromSecret(senderSecret);
   const senderAccount = await server.loadAccount(senderKeypair.publicKey());
 
@@ -1212,4 +1232,5 @@ module.exports = {
   analyzeContractFees,
   resolveFederationAddress,
   mintRewardTokens,
+  generatePaymentLink,
 };
