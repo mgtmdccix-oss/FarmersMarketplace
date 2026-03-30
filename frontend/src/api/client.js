@@ -154,6 +154,7 @@ export const api = {
     return request(`/products/${productId}/video`, { method: 'POST', body: form });
   },
   getProductImages: (productId) => request(`/products/${productId}/images`),
+  getRecommendations: () => request('/recommendations'),
   uploadProductImages: (productId, files) => {
     const form = new FormData();
     files.forEach((f) => form.append('images', f));
@@ -225,6 +226,7 @@ export const api = {
   adminGetStats: () => request('/admin/stats'),
   adminGetContracts: (qs = '') => request(`/admin/contracts${qs}`),
   adminRegisterContract: (body) => request('/admin/contracts', { method: 'POST', body }),
+  adminDeployContract: (formData) => request('/admin/contracts/deploy', { method: 'POST', body: formData }),
   adminDeregisterContract: (id) => request(`/admin/contracts/${id}`, { method: 'DELETE' }),
   adminGetContractUpgrades: (registryId) => request(`/admin/contracts/${registryId}/upgrades`),
   adminRecordContractUpgrade: (registryId, body) =>
@@ -234,11 +236,35 @@ export const api = {
   adminRevokeContractAcl: (registryId, address) => request(`/admin/contracts/${registryId}/acl/${encodeURIComponent(address)}`, { method: 'DELETE' }),
   adminGetContractAlerts: (acknowledged) => request(`/admin/contract-alerts${acknowledged !== undefined ? `?acknowledged=${acknowledged}` : ''}`),
   adminAcknowledgeContractAlert: (id) => request(`/admin/contract-alerts/${id}/acknowledge`, { method: 'PATCH' }),
+  adminGetContractInvocations: (registryId, params = {}) => request(`/admin/contracts/${registryId}/invocations${toQs(params)}`),
+
+  getBundleDiscounts: () => request('/farmers/me/bundle-discounts'),
+  createBundleDiscount: (body) => request('/farmers/me/bundle-discounts', { method: 'POST', body }),
+  updateBundleDiscount: (id, body) => request(`/farmers/me/bundle-discounts/${id}`, { method: 'PUT', body }),
+  deleteBundleDiscount: (id) => request(`/farmers/me/bundle-discounts/${id}`, { method: 'DELETE' }),
+  adminExportContractState: async (registryId, format = 'json', sinceLedger) => {
+    const qs = new URLSearchParams({ format });
+    if (sinceLedger != null && sinceLedger !== '') qs.set('since_ledger', sinceLedger);
+    const headers = { Authorization: `Bearer ${accessToken}` };
+    const res = await fetch(`${BASE}/admin/contracts/${registryId}/state/export?${qs}`, { headers });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || `Export failed (${res.status})`);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `contract-state-${registryId}-${new Date().toISOString().slice(0, 10)}.${format}`;
+    a.click();
+    URL.revokeObjectURL(url);
+  },
 
   getAddresses: () => request('/addresses'),
 
   placeOrderWithBudgetOverride: (body) => request('/orders', { method: 'POST', body: { ...body, budget_override_confirmed: true } }),
   // params may include: status, page, limit
+  getOrderPaymentLink: (id) => request(`/orders/${id}/payment-link`),
   getOrders:    (params = {})  => request(`/orders${toQs(params)}`),
   getSales:     (params = {})  => request(`/orders/sales${toQs(params)}`),
 
@@ -260,6 +286,11 @@ export const api = {
 
   placeOrder: (body) => request('/orders', { method: 'POST', body }),
   getOrderStatus: (id) => request(`/orders/${id}/status`),
+  getOrderPaymentLink: (orderId) => request(`/orders/${orderId}/payment-link`),
+  getOrderPaymentLinkQr: (orderId) => `/api/orders/${orderId}/payment-link/qr`,
+  getOrders: (params = {}) => request(`/orders${toQs(params)}`),
+  getSales: (params = {}) => request(`/orders/sales${toQs(params)}`),
+  updateOrderStatus: (id, status) => request(`/orders/${id}/status`, { method: 'PATCH', body: { status } }),
 
   getAuctions: () => request('/auctions'),
   getAuction: (id) => request(`/auctions/${id}`),
@@ -326,4 +357,11 @@ export const api = {
   // Account alerts
   getAlerts: () => request('/wallet/alerts'),
   markAlertRead: (id) => request(`/wallet/alerts/${id}/read`, { method: 'PATCH' }),
+
+  // Announcements
+  getAnnouncements: () => request('/announcements'),
+  adminGetAnnouncements: () => request('/announcements/admin'),
+  adminCreateAnnouncement: (body) => request('/announcements/admin', { method: 'POST', body }),
+  adminUpdateAnnouncement: (id, body) => request(`/announcements/admin/${id}`, { method: 'PATCH', body }),
+  adminDeleteAnnouncement: (id) => request(`/announcements/admin/${id}`, { method: 'DELETE' }),
 };

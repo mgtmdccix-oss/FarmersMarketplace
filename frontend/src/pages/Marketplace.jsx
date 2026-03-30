@@ -263,6 +263,20 @@ const EMPTY_FILTERS = {
   excludeAllergens: [],
 };
 
+function getFreshnessBadge(bestBefore) {
+  if (!bestBefore) return null;
+  const today = new Date();
+  const expiry = new Date(bestBefore);
+  const diffTime = expiry - today;
+  const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+  if (diffDays < 0) return null; // expired, but shouldn't be shown
+  if (diffDays === 0) return { text: 'Expires today', color: '#ff6b6b' };
+  if (diffDays === 1) return { text: 'Expires tomorrow', color: '#ffa726' };
+  if (diffDays <= 3) return { text: `${diffDays} days left`, color: '#ffb74d' };
+  if (diffDays <= 7) return { text: `${diffDays} days left`, color: '#81c784' };
+  return { text: 'Fresh', color: '#4caf50' };
+}
+
 export default function Marketplace() {
   const { t } = useTranslation();
   const [products, setProducts] = useState([]);
@@ -273,6 +287,8 @@ export default function Marketplace() {
   const [pagination, setPagination] = useState({ total: 0, totalPages: 1 });
   const [bundles, setBundles] = useState([]);
   const [bundleMsg, setBundleMsg] = useState({});
+  const [recommendations, setRecommendations] = useState([]);
+  const [recsLoading, setRecsLoading] = useState(false);
   const [viewMode, setViewMode] = useState("grid"); // 'grid' | 'map'
   const [geoLoading, setGeoLoading] = useState(false);
   const navigate = useNavigate();
@@ -351,6 +367,19 @@ export default function Marketplace() {
       .then((res) => setBundles(res.data ?? []))
       .catch(() => {});
   }, []);
+
+  // Load recommendations if logged in
+  useEffect(() => {
+    if (user) {
+      setRecsLoading(true);
+      api.getRecommendations()
+        .then(res => setRecommendations(res.data ?? []))
+        .catch(() => {})
+        .finally(() => setRecsLoading(false));
+    } else {
+      setRecommendations([]);
+    }
+  }, [user]);
 
   async function handleBuyBundle(bundleId) {
     if (!user) return navigate("/auth");
@@ -453,6 +482,48 @@ export default function Marketplace() {
         </div>
       </div>
       <div style={s.sub}>{t("marketplace.subtitle")}</div>
+
+      {recommendations.length > 0 && (
+        <div style={{ marginBottom: 36 }}>
+          <div style={{ ...s.title, fontSize: 20, marginBottom: 12 }}>⭐ Recommended For You</div>
+          {recsLoading ? (
+            <div>Loading…</div>
+          ) : (
+            <div style={s.grid}>
+              {recommendations.slice(0, 6).map((p) => (
+                <div key={p.id} style={s.card} onClick={() => navigate(`/product/${p.id}`)}
+                  onMouseEnter={(e) => (e.currentTarget.style.transform = "translateY(-2px)")}
+                  onMouseLeave={(e) => (e.currentTarget.style.transform = "")}>
+                  <div style={s.cardHeader}>
+                    <div style={{ flex: 1 }}>
+                      {p.image_url ? (
+                        <img src={p.image_url} alt={p.name} style={{ width: "100%", height: 140, objectFit: "cover", borderRadius: 8, marginBottom: 10 }} />
+                      ) : (
+                        <div style={{ fontSize: 32, marginBottom: 8 }}>🥬</div>
+                      )}
+                    </div>
+                    {user && user.role === "buyer" && (
+                      <button style={s.favoriteBtn} onClick={(e) => { e.stopPropagation(); toggleFavorite(p.id); }}
+                        title={isFavorited(p.id) ? "Remove from favorites" : "Add to favorites"}>
+                        {isFavorited(p.id) ? "❤️" : "🤍"}
+                      </button>
+                    )}
+                  </div>
+                  {p.category && p.category !== "other" && <div style={s.badge}>{p.category}</div>}
+                  <div style={s.name}>{p.name}</div>
+                  <div style={s.desc}>{p.description || "Fresh from the farm"}</div>
+                  <div style={s.price}>{p.price} XLM <span style={{ fontSize: 13 }}>/{p.unit || "unit"}</span></div>
+                  <div style={s.qty}>{t("marketplace.available", { qty: p.quantity, unit: p.unit })}</div>
+                  <div style={s.sellerSection}>
+                    <div style={s.sellerAvatar}>👨‍🌾</div>
+                    <div style={s.sellerInfo}><div style={s.sellerName}>{p.farmer_name}</div></div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {auctions.length > 0 && (
         <div style={{ marginBottom: 36 }}>

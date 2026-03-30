@@ -43,6 +43,8 @@ const EMPTY_FORM = {
     fiber: '',
     vitamins: {},
   },
+  harvest_date: '',
+  best_before: '',
 };
 
 import { useAuth } from '../context/AuthContext';
@@ -74,6 +76,11 @@ export default function Dashboard() {
   const [bundles, setBundles] = useState([]);
   const [bundleForm, setBundleForm] = useState({ name: '', description: '', price: '', items: [{ product_id: '', quantity: 1 }] });
   const [bundleMsg, setBundleMsg] = useState(null);
+
+  // bundle discount state
+  const [bundleDiscounts, setBundleDiscounts] = useState([]);
+  const [bdForm, setBdForm] = useState({ min_products: '', discount_percent: '' });
+  const [bdMsg, setBdMsg] = useState(null);
 
   // image state
   const [imageFile, setImageFile] = useState(null);
@@ -243,6 +250,9 @@ export default function Dashboard() {
         coops.map(c => api.getPendingTxs(c.id).then(r => (r.data ?? []).map(t => ({ ...t, coopName: c.name }))).catch(() => []))
       );
       setPendingTxs(allPending.flat().filter(t => t.status === 'pending' && !t.alreadySigned));
+
+      const bdRes = await api.getBundleDiscounts().catch(() => ({ data: [] }));
+      setBundleDiscounts(bdRes.data ?? []);
 
       if (profileRes.data) {
         const d = profileRes.data;
@@ -873,6 +883,22 @@ export default function Dashboard() {
               </>
             )}
 
+            <label style={s.label}>Harvest Date (optional)</label>
+            <input
+              style={s.input}
+              type="date"
+              value={form.harvest_date}
+              onChange={e => setForm({ ...form, harvest_date: e.target.value })}
+            />
+
+            <label style={s.label}>Best Before Date (optional)</label>
+            <input
+              style={s.input}
+              type="date"
+              value={form.best_before}
+              onChange={e => setForm({ ...form, best_before: e.target.value })}
+            />
+
             {/* Image upload */}
             <label style={s.label}>{t('dashboard.productImage')} <span style={{ color: '#aaa', fontWeight: 400 }}>{t('dashboard.imageHint')}</span></label>
 
@@ -1380,6 +1406,77 @@ export default function Dashboard() {
               </div>
             );
           })
+        )}
+      </div>
+
+      {/* Bundle Discount Tiers */}
+      <div style={{ ...s.card, marginTop: 24 }}>
+        <div style={{ fontSize: 16, fontWeight: 700, color: '#2d6a4f', marginBottom: 12 }}>🏷️ Bundle Discounts</div>
+        <p style={{ fontSize: 13, color: '#666', marginBottom: 12 }}>
+          Buyers who order multiple different products from you get an automatic discount. Add tiers below (e.g. 3+ products = 10% off).
+        </p>
+        {bdMsg && (
+          <div style={{ ...s.msg, background: bdMsg.type === 'ok' ? '#d8f3dc' : '#fee', color: bdMsg.type === 'ok' ? '#2d6a4f' : '#c0392b' }}>
+            {bdMsg.text}
+          </div>
+        )}
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            setBdMsg(null);
+            try {
+              await api.createBundleDiscount({ min_products: parseInt(bdForm.min_products, 10), discount_percent: parseFloat(bdForm.discount_percent) });
+              setBdForm({ min_products: '', discount_percent: '' });
+              const res = await api.getBundleDiscounts();
+              setBundleDiscounts(res.data ?? []);
+              setBdMsg({ type: 'ok', text: 'Discount tier added.' });
+            } catch (err) { setBdMsg({ type: 'error', text: err.message }); }
+          }}
+          style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16, alignItems: 'flex-end' }}
+        >
+          <div>
+            <label style={s.label}>Min. distinct products</label>
+            <input style={{ ...s.input, width: 120 }} type="number" min="2" placeholder="e.g. 3" value={bdForm.min_products} onChange={(e) => setBdForm((f) => ({ ...f, min_products: e.target.value }))} required />
+          </div>
+          <div>
+            <label style={s.label}>Discount %</label>
+            <input style={{ ...s.input, width: 120 }} type="number" min="0.01" max="100" step="0.01" placeholder="e.g. 10" value={bdForm.discount_percent} onChange={(e) => setBdForm((f) => ({ ...f, discount_percent: e.target.value }))} required />
+          </div>
+          <button type="submit" style={s.btn}>Add Tier</button>
+        </form>
+        {bundleDiscounts.length === 0 ? (
+          <div style={{ color: '#888', fontSize: 13 }}>No discount tiers configured.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '2px solid #eee', color: '#555' }}>Min. products</th>
+                <th style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '2px solid #eee', color: '#555' }}>Discount</th>
+                <th style={{ padding: '8px 10px', borderBottom: '2px solid #eee' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {bundleDiscounts.map((bd) => (
+                <tr key={bd.id}>
+                  <td style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0' }}>{bd.min_products}+ products</td>
+                  <td style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', color: '#2d6a4f', fontWeight: 600 }}>{bd.discount_percent}% off</td>
+                  <td style={{ padding: '8px 10px', borderBottom: '1px solid #f0f0f0', textAlign: 'right' }}>
+                    <button
+                      style={{ background: '#fee', color: '#c0392b', border: 'none', borderRadius: 6, padding: '4px 10px', cursor: 'pointer', fontSize: 12 }}
+                      onClick={async () => {
+                        if (!confirm('Delete this discount tier?')) return;
+                        try {
+                          await api.deleteBundleDiscount(bd.id);
+                          const res = await api.getBundleDiscounts();
+                          setBundleDiscounts(res.data ?? []);
+                        } catch (err) { setBdMsg({ type: 'error', text: err.message }); }
+                      }}
+                    >Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 

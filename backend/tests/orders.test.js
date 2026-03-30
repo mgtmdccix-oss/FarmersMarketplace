@@ -207,6 +207,71 @@ describe('GET /api/orders', () => {
   });
 });
 
+describe('SEP-0007 payment links', () => {
+  it('creates a pending order for sep7 payment', async () => {
+    mockQuery
+      .mockResolvedValueOnce({ rows: [product], rowCount: 1 }) // product lookup
+      .mockResolvedValueOnce({ rows: [buyer], rowCount: 1 }) // buyer lookup
+      .mockResolvedValueOnce({ rowCount: 1 }) // stock decrement
+      .mockResolvedValueOnce({ rows: [{ id: 99 }], rowCount: 1 }); // insert order
+
+    const res = await request(app)
+      .post('/api/orders')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({ product_id: 10, quantity: 2, payment_method: 'sep7' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('pending');
+    expect(res.body.orderId).toBe(99);
+  });
+
+  it('returns a SEP-0007 payment link for pending order and 30-minute valid', async () => {
+    const createdAt = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    mockQuery.mockResolvedValueOnce({ rows: [{
+      id: 99,
+      buyer_id: 2,
+      product_id: 10,
+      quantity: 2,
+      total_price: 10.0,
+      status: 'pending',
+      created_at: createdAt,
+      is_preorder: false,
+      preorder_delivery_date: null,
+      farmer_wallet: 'GFARMER',
+    }], rowCount: 1 });
+
+    const res = await request(app)
+      .get('/api/orders/99/payment-link')
+      .set('Authorization', `Bearer ${buyerToken}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.paymentLink).toContain('web+stellar:pay');
+    expect(res.body.expiresAt).toBeDefined();
+  });
+
+  it('returns 410 when payment link is expired', async () => {
+    const createdAt = new Date(Date.now() - 31 * 60 * 1000).toISOString();
+    mockQuery.mockResolvedValueOnce({ rows: [{
+      id: 99,
+      buyer_id: 2,
+      product_id: 10,
+      quantity: 2,
+      total_price: 10.0,
+      status: 'pending',
+      created_at: createdAt,
+      is_preorder: false,
+      preorder_delivery_date: null,
+      farmer_wallet: 'GFARMER',
+    }], rowCount: 1 });
+
+    const res = await request(app)
+      .get('/api/orders/99/payment-link')
+      .set('Authorization', `Bearer ${buyerToken}`);
+
+    expect(res.status).toBe(410);
+  });
+});
+
 describe('GET /api/orders/sales', () => {
   it('returns paginated farmer sales', async () => {
     mockQuery

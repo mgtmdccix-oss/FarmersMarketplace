@@ -2,7 +2,8 @@ const router = require('express').Router();
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
 const adminAuth = require('../middleware/adminAuth');
-const { getContractWasmHash } = require('../utils/stellar');
+const { getContractWasmHash, deployContract } = require('../utils/stellar');
+const multer = require('multer');
 
 const STELLAR_NETWORK = (process.env.STELLAR_NETWORK || 'testnet').toLowerCase();
 
@@ -290,6 +291,61 @@ router.patch('/farmers/:id/verify', async (req, res) => {
   res.json({ success: true, message: `Farmer ${status}` });
 });
 
+// GET /api/admin/contracts/:id/invocations?method=&from=&to=&page=
+router.get('/contracts/:id/invocations', async (req, res) => {
+  const registryId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(registryId)) {
+    return res.status(400).json({ success: false, error: 'Invalid contract registry id' });
+  }
+  const { rows: reg } = await db.query('SELECT contract_id FROM contracts_registry WHERE id = $1', [registryId]);
+  if (!reg[0]) return res.status(404).json({ success: false, error: 'Contract not found' });
+
+  const page  = Math.max(1, parseInt(req.query.page  || '1', 10));
+  const limit = 20;
+  const offset = (page - 1) * limit;
+
+  const conditions = ['contract_id = $1'];
+  const params = [reg[0].contract_id];
+
+  if (req.query.method) {
+    conditions.push(`method = $${params.length + 1}`);
+    params.push(req.query.method);
+  }
+  if (req.query.from) {
+    conditions.push(`invoked_at >= $${params.length + 1}`);
+    params.push(req.query.from);
+  }
+  if (req.query.to) {
+    conditions.push(`invoked_at <= $${params.length + 1}`);
+    params.push(req.query.to);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const { rows: countRows } = await db.query(
+    `SELECT COUNT(*) as count FROM contract_invocations ${where}`,
+    params,
+  );
+  const total = parseInt(countRows[0].count, 10);
+
+  const { rows } = await db.query(
+    `SELECT ci.id, ci.contract_id, ci.method, ci.args, ci.result, ci.tx_hash,
+            ci.success, ci.error, ci.invoked_at, u.name AS invoked_by_name
+     FROM contract_invocations ci
+     LEFT JOIN users u ON ci.invoked_by = u.id
+     ${where}
+     ORDER BY ci.invoked_at DESC
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    [...params, limit, offset],
+  );
+
+  res.json({
+    success: true,
+    data: rows,
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+  });
+});
+
 // ── Contract ACL ──────────────────────────────────────────────────────────
 
 const STELLAR_ADDRESS_RE = /^G[A-Z2-7]{55}$/;
@@ -344,6 +400,153 @@ router.delete('/contracts/:id/acl/:address', async (req, res) => {
   res.json({ success: true, message: 'Access revoked' });
 });
 
+// GET /api/admin/contracts/:id/state/export — download contract storage as JSON or CSV
+router.get('/contracts/:id/state/export', async (req, res) => {
+  const registryId = parseInt(req.params.id, 10);
+  if (!Number.isFinite(registryId)) {
+    return res.status(400).json({ success: false, error: 'Invalid contract registry id' });
+  }
+
+  const { rows: reg } = await db.query(
+    'SELECT contract_id FROM contracts_registry WHERE id = $1',
+    [registryId],
+  );
+  if (!reg[0]) return res.status(404).json({ success: false, error: 'Contract not found' });
+
+  const format = (req.query.format || 'json').toLowerCase();
+  if (!['json', 'csv'].includes(format)) {
+    return res.status(400).json({ success: false, error: 'format must be json or csv' });
+  }
+
+  const sinceLedger = req.query.since_ledger ? parseInt(req.query.since_ledger, 10) : null;
+  if (req.query.since_ledger !== undefined && !Number.isFinite(sinceLedger)) {
+    return res.status(400).json({ success: false, error: 'since_ledger must be an integer' });
+  }
+
+  const { getContractState } = require('../utils/stellar');
+  let entries;
+  try {
+    entries = await getContractState(reg[0].contract_id, null);
+  } catch (e) {
+    if (e.code === 404 || e.message?.includes('not found')) {
+      return res.status(404).json({ success: false, error: 'Contract not found on Soroban RPC' });
+    }
+    return res.status(502).json({ success: false, error: e.message || 'RPC error' });
+  }
+
+  // Incremental filter: entries carry lastModifiedLedgerSeq from the RPC response
+  if (sinceLedger !== null) {
+    entries = entries.filter(
+      (e) => e.lastModifiedLedgerSeq != null && e.lastModifiedLedgerSeq > sinceLedger,
+    );
+  }
+
+  const contractId = reg[0].contract_id;
+  const exportedAt = new Date().toISOString();
+  const ledgerSeq = entries[0]?.lastModifiedLedgerSeq ?? null;
+  const slug = contractId.slice(0, 8).toLowerCase();
+  const ts = exportedAt.slice(0, 10);
+
+  if (format === 'csv') {
+    const escape = (v) => {
+      const s = v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v);
+      return s.includes(',') || s.includes('"') || s.includes('\n')
+        ? `"${s.replace(/"/g, '""')}"`
+        : s;
+    };
+    const rows = [
+      `# contract_id: ${contractId}`,
+      `# exported_at: ${exportedAt}`,
+      sinceLedger !== null ? `# since_ledger: ${sinceLedger}` : null,
+      'key,value,durability,last_modified_ledger',
+      ...entries.map((e) =>
+        [escape(e.key), escape(e.val), escape(e.durability), escape(e.lastModifiedLedgerSeq)].join(','),
+      ),
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="contract-state-${slug}-${ts}.csv"`);
+    return res.send(rows);
+  }
+
+  // JSON
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="contract-state-${slug}-${ts}.json"`);
+  res.json({
+    contract_id: contractId,
+    exported_at: exportedAt,
+    ledger_sequence: ledgerSeq,
+    ...(sinceLedger !== null && { since_ledger: sinceLedger }),
+    entries: entries.map(({ key, val, durability, lastModifiedLedgerSeq }) => ({
+      key,
+      value: val,
+      durability,
+      last_modified_ledger: lastModifiedLedgerSeq ?? null,
+    })),
+  });
+});
+
+// POST /api/admin/contracts/deploy — upload WASM file and deploy contract
+const upload = multer({
+  limits: { fileSize: 2 * 1024 * 1024 }, // 2MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype !== 'application/wasm' || !file.originalname.endsWith('.wasm')) {
+      return cb(new Error('Only .wasm files are allowed'));
+    }
+    cb(null, true);
+  },
+});
+
+router.post('/contracts/deploy', upload.single('wasm'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ success: false, error: 'WASM file is required' });
+    }
+
+    const { name, type } = req.body;
+    if (!name || !type) {
+      return res.status(400).json({ success: false, error: 'name and type are required' });
+    }
+    if (!['escrow', 'token', 'other'].includes(type)) {
+      return res.status(400).json({ success: false, error: 'type must be escrow, token, or other' });
+    }
+
+    // Get deployer secret from env
+    const deployerSecret = process.env.SOROBAN_DEPLOYER_SECRET;
+    if (!deployerSecret) {
+      return res.status(500).json({ success: false, error: 'SOROBAN_DEPLOYER_SECRET not configured' });
+    }
+
+    // Deploy the contract
+    const { contractId, wasmHash, txHash } = await deployContract({
+      wasmBuffer: req.file.buffer,
+      deployerSecret,
+    });
+
+    // Register in database
+    const { rows } = await db.query(
+      `INSERT INTO contracts_registry (contract_id, name, type, network, wasm_hash, deployed_by) 
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [contractId, name.trim(), type, STELLAR_NETWORK, wasmHash, req.user.id]
+    );
+
+    res.status(201).json({
+      success: true,
+      data: {
+        contract_id: contractId,
+        wasm_hash: wasmHash,
+        deployment_tx_hash: txHash,
+        registry: rows[0],
+      },
+    });
+  } catch (error) {
+    console.error('Contract deployment error:', error);
+    if (error.message.includes('Only .wasm files are allowed')) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    res.status(500).json({ success: false, error: 'Contract deployment failed: ' + error.message });
 // ── Contract Documentation & Analysis ──────────────────────────────────────
 
 const { getContractABI, analyzeContractFees } = require('../utils/stellar');

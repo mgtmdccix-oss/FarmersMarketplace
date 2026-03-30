@@ -17,6 +17,9 @@ if (STELLAR_NETWORK === 'mainnet' && process.env.STELLAR_MAINNET_CONFIRMED !== '
 
 const isTestnet = STELLAR_NETWORK === 'testnet';
 
+const sorobanRpcUrl = process.env.SOROBAN_RPC_URL || (isTestnet ? 'https://soroban-testnet.stellar.org' : 'https://soroban.stellar.org');
+const sorobanServer = new StellarSdk.SorobanRpc.Server(sorobanRpcUrl);
+
 const horizonUrl =
   process.env.STELLAR_HORIZON_URL ||
   (isTestnet ? 'https://horizon-testnet.stellar.org' : 'https://horizon.stellar.org');
@@ -187,15 +190,28 @@ async function getTransactions(publicKey) {
   }
 }
 
-module.exports = {
-  isTestnet,
-  server,
-  createWallet,
-  fundTestnetAccount,
-  getBalance,
-  sendPayment,
-  getTransactions,
-};
+function generatePaymentLink({ destination, amount, memo, memoType = 'text', assetCode = 'XLM', assetIssuer }) {
+  if (!destination) throw new Error('destination is required for SEP-0007 link');
+  if (!amount || Number.isNaN(parseFloat(amount))) throw new Error('valid amount is required for SEP-0007 link');
+
+  const url = new URL('web+stellar:pay');
+  url.searchParams.set('destination', destination);
+  url.searchParams.set('amount', Number(amount).toFixed(7));
+
+  if (memo != null) {
+    url.searchParams.set('memo', String(memo));
+    url.searchParams.set('memo_type', memoType);
+  }
+
+  if (assetCode && assetCode.toUpperCase() !== 'XLM') {
+    url.searchParams.set('asset_code', assetCode);
+    if (!assetIssuer) {
+      throw new Error('assetIssuer is required for non-native SEP-0007 assets');
+    }
+    url.searchParams.set('asset_issuer', assetIssuer);
+  }
+
+  return url.toString();
 // In-memory cache: publicKey -> { federationAddress, expiresAt }
 const _federationCache = new Map();
 const FEDERATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -235,8 +251,15 @@ module.exports = {
   getBalance,
   sendPayment,
   getTransactions,
+  generatePaymentLink,
 };
-async function createClaimableBalance({ senderSecret, farmerPublicKey, buyerPublicKey, amount }) {
+
+async function createClaimableBalance({
+  senderSecret,
+  farmerPublicKey,
+  buyerPublicKey,
+  amount,
+}) {
   const senderKeypair = StellarSdk.Keypair.fromSecret(senderSecret);
   const senderAccount = await server.loadAccount(senderKeypair.publicKey());
 
@@ -379,7 +402,8 @@ async function getContractState(contractId, prefix = null) {
       const key = data ? StellarSdk.scValToNative(data.key()) : String(entry.key);
       const val = data ? StellarSdk.scValToNative(data.val()) : null;
       const durability = data?.durability()?.name || 'Persistent';
-      return { key: String(key), val, durability };
+      const lastModifiedLedgerSeq = entry.lastModifiedLedgerSeq ?? null;
+      return { key: String(key), val, durability, lastModifiedLedgerSeq };
     })
     .filter((e) => !prefix || String(e.key).startsWith(prefix));
 
@@ -1181,6 +1205,96 @@ async function getContractEvents(contractId, filters = {}) {
   return { events: items, pagination: { page, pages, total, limit } };
 }
 
+/**
+ * Deploy a Soroban contract: upload WASM and instantiate.
+ * @param {Buffer} wasmBuffer - The compiled WASM bytecode
+ * @param {string} deployerSecret - Secret key of the deployer account
+ * @returns {Promise<{ contractId: string, wasmHash: string, txHash: string }>}
+ */
+async function deployContract({ wasmBuffer, deployerSecret }) {
+  const deployerKeypair = StellarSdk.Keypair.fromSecret(deployerSecret);
+  const deployerAccount = await server.loadAccount(deployerKeypair.publicKey());
+
+  const sorobanRpcUrl =
+    process.env.SOROBAN_RPC_URL ||
+    (isTestnet ? 'https://soroban-testnet.stellar.org' : 'https://soroban.stellar.org');
+  const sorobanServer = new StellarSdk.SorobanRpc.Server(sorobanRpcUrl);
+
+  // Step 1: Upload WASM
+  const wasmHash = StellarSdk.hash(wasmBuffer);
+  const uploadOp = StellarSdk.Operation.uploadContractWasm({
+    wasm: wasmBuffer,
+  });
+
+  let tx = new StellarSdk.TransactionBuilder(deployerAccount, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(uploadOp)
+    .setTimeout(60)
+    .build();
+
+  tx = await sorobanServer.prepareTransaction(tx);
+  tx.sign(deployerKeypair);
+
+  const uploadResult = await sorobanServer.sendTransaction(tx);
+  if (uploadResult.status === 'ERROR') {
+    throw new Error(uploadResult.errorResultXdr || 'WASM upload failed');
+  }
+
+  // Wait for upload confirmation
+  let uploadHash = uploadResult.hash;
+  for (let i = 0; i < 15; i++) {
+    const txResult = await sorobanServer.getTransaction(uploadHash);
+    if (txResult.status === 'SUCCESS') break;
+    if (txResult.status === 'FAILED') throw new Error('WASM upload transaction failed');
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  // Step 2: Instantiate contract
+  const createOp = StellarSdk.Operation.createContract({
+    wasmHash,
+  });
+
+  const createAccount = await server.loadAccount(deployerKeypair.publicKey()); // reload to get updated sequence
+  tx = new StellarSdk.TransactionBuilder(createAccount, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(createOp)
+    .setTimeout(60)
+    .build();
+
+  tx = await sorobanServer.prepareTransaction(tx);
+  tx.sign(deployerKeypair);
+
+  const createResult = await sorobanServer.sendTransaction(tx);
+  if (createResult.status === 'ERROR') {
+    throw new Error(createResult.errorResultXdr || 'Contract instantiation failed');
+  }
+
+  // Wait for instantiation confirmation
+  let createHash = createResult.hash;
+  for (let i = 0; i < 15; i++) {
+    const txResult = await sorobanServer.getTransaction(createHash);
+    if (txResult.status === 'SUCCESS') {
+      const contractId = txResult.resultMetaXdr?.v3()?.sorobanMeta()?.events()?.[0]?.contractEvent()?.contractId()?.contractId()?.toString('hex');
+      if (contractId) {
+        return {
+          contractId: StellarSdk.StrKey.encodeContract(StellarSdk.xdr.ScAddressType.scAddressTypeContract().value, Buffer.from(contractId, 'hex')),
+          wasmHash: wasmHash.toString('hex'),
+          txHash: createHash,
+        };
+      }
+      break;
+    }
+    if (txResult.status === 'FAILED') throw new Error('Contract instantiation transaction failed');
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+
+  throw new Error('Failed to extract contract ID from transaction result');
+}
+
 module.exports = {
   isTestnet,
   server,
@@ -1208,8 +1322,77 @@ module.exports = {
   getContractWasmHash,
   simulateContractCall,
   getContractEvents,
+  deployContract,
   getContractABI,
   analyzeContractFees,
   resolveFederationAddress,
   mintRewardTokens,
+  generatePaymentLink,
+};
+
+/**
+ * General purpose Soroban contract invocation (state-changing).
+ */
+async function invokeContract({ contractId, method, args = [], signerSecret }) {
+  const keypair = StellarSdk.Keypair.fromSecret(signerSecret);
+  const source = await server.loadAccount(keypair.publicKey());
+  const contract = new StellarSdk.Contract(contractId);
+
+  const scArgs = args.map(arg => StellarSdk.nativeToScVal(arg.value, { type: arg.type }));
+  let operation = contract.call(method, ...scArgs);
+
+  let tx = new StellarSdk.TransactionBuilder(source, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(operation)
+    .setTimeout(60)
+    .build();
+
+  tx = await sorobanServer.prepareTransaction(tx);
+  tx.sign(keypair);
+
+  const sendResult = await sorobanServer.sendTransaction(tx);
+  if (sendResult.status === 'ERROR') {
+    throw new Error(`Soroban RPC Error: ${sendResult.errorResultXdr}`);
+  }
+
+  const hash = sendResult.hash;
+  for (let i = 0; i < 10; i++) {
+    const txResult = await sorobanServer.getTransaction(hash);
+    if (txResult.status === 'SUCCESS') return { hash, result: txResult.returnValue };
+    if (txResult.status === 'FAILED') throw new Error('Soroban transaction failed');
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error('Transaction confirmation timeout');
+}
+
+/**
+ * General purpose Soroban simulation (read-only).
+ */
+async function simulateContract({ contractId, method, args = [] }) {
+  const sourcePublic = process.env.PLATFORM_WALLET_PUBLIC_KEY;
+  const account = await server.loadAccount(sourcePublic);
+  const contract = new StellarSdk.Contract(contractId);
+  const scArgs = args.map(arg => StellarSdk.nativeToScVal(arg.value, { type: arg.type }));
+  
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(contract.call(method, ...scArgs))
+    .setTimeout(60)
+    .build();
+
+  const sim = await sorobanServer.simulateTransaction(tx);
+  if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+    throw new Error(`Simulation failed: ${JSON.stringify(sim.error)}`);
+  }
+  return sim;
+}
+
+module.exports = {
+  ...module.exports,
+  invokeContract,
+  simulateContract,
 };
