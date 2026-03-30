@@ -17,6 +17,9 @@ if (STELLAR_NETWORK === 'mainnet' && process.env.STELLAR_MAINNET_CONFIRMED !== '
 
 const isTestnet = STELLAR_NETWORK === 'testnet';
 
+const sorobanRpcUrl = process.env.SOROBAN_RPC_URL || (isTestnet ? 'https://soroban-testnet.stellar.org' : 'https://soroban.stellar.org');
+const sorobanServer = new StellarSdk.SorobanRpc.Server(sorobanRpcUrl);
+
 const horizonUrl =
   process.env.STELLAR_HORIZON_URL ||
   (isTestnet ? 'https://horizon-testnet.stellar.org' : 'https://horizon.stellar.org');
@@ -1055,4 +1058,71 @@ module.exports = {
   getContractEvents,
   resolveFederationAddress,
   mintRewardTokens,
+};
+
+/**
+ * General purpose Soroban contract invocation (state-changing).
+ */
+async function invokeContract({ contractId, method, args = [], signerSecret }) {
+  const keypair = StellarSdk.Keypair.fromSecret(signerSecret);
+  const source = await server.loadAccount(keypair.publicKey());
+  const contract = new StellarSdk.Contract(contractId);
+
+  const scArgs = args.map(arg => StellarSdk.nativeToScVal(arg.value, { type: arg.type }));
+  let operation = contract.call(method, ...scArgs);
+
+  let tx = new StellarSdk.TransactionBuilder(source, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(operation)
+    .setTimeout(60)
+    .build();
+
+  tx = await sorobanServer.prepareTransaction(tx);
+  tx.sign(keypair);
+
+  const sendResult = await sorobanServer.sendTransaction(tx);
+  if (sendResult.status === 'ERROR') {
+    throw new Error(`Soroban RPC Error: ${sendResult.errorResultXdr}`);
+  }
+
+  const hash = sendResult.hash;
+  for (let i = 0; i < 10; i++) {
+    const txResult = await sorobanServer.getTransaction(hash);
+    if (txResult.status === 'SUCCESS') return { hash, result: txResult.returnValue };
+    if (txResult.status === 'FAILED') throw new Error('Soroban transaction failed');
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error('Transaction confirmation timeout');
+}
+
+/**
+ * General purpose Soroban simulation (read-only).
+ */
+async function simulateContract({ contractId, method, args = [] }) {
+  const sourcePublic = process.env.PLATFORM_WALLET_PUBLIC_KEY;
+  const account = await server.loadAccount(sourcePublic);
+  const contract = new StellarSdk.Contract(contractId);
+  const scArgs = args.map(arg => StellarSdk.nativeToScVal(arg.value, { type: arg.type }));
+  
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: StellarSdk.BASE_FEE,
+    networkPassphrase,
+  })
+    .addOperation(contract.call(method, ...scArgs))
+    .setTimeout(60)
+    .build();
+
+  const sim = await sorobanServer.simulateTransaction(tx);
+  if (StellarSdk.rpc.Api.isSimulationError(sim)) {
+    throw new Error(`Simulation failed: ${JSON.stringify(sim.error)}`);
+  }
+  return sim;
+}
+
+module.exports = {
+  ...module.exports,
+  invokeContract,
+  simulateContract,
 };
