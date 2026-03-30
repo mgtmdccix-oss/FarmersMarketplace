@@ -12,6 +12,7 @@ const {
   sendPayment,
   addTrustline,
   removeTrustline,
+  mergeAccount,
 } = require("../utils/stellar");
 const { err } = require("../middleware/error");
 
@@ -342,6 +343,63 @@ router.delete("/trustline", auth, async (req, res) => {
     assetIssuer,
   });
   res.json({ success: true, txHash });
+});
+
+router.post("/merge", auth, async (req, res) => {
+  const destination = String(req.body.destination || "").trim();
+  const password = String(req.body.password || "").trim();
+
+  if (!destination) {
+    return err(res, 400, "destination is required", "validation_error");
+  }
+  if (!StellarSdk.StrKey.isValidEd25519PublicKey(destination)) {
+    return err(res, 400, "Invalid destination address", "invalid_destination");
+  }
+  if (!password) {
+    return err(res, 400, "password is required", "validation_error");
+  }
+
+  const bcrypt = require("bcryptjs");
+  const { rows } = await db.query(
+    "SELECT stellar_public_key, stellar_secret_key, password_hash FROM users WHERE id = $1",
+    [req.user.id],
+  );
+  const user = rows[0];
+  if (!user) return err(res, 404, "User not found", "user_not_found");
+
+  const valid = await bcrypt.compare(password, user.password_hash);
+  if (!valid) return err(res, 401, "Incorrect password", "invalid_password");
+
+  if (destination === user.stellar_public_key) {
+    return err(res, 400, "Cannot merge account into itself", "same_destination");
+  }
+
+  try {
+    const txHash = await mergeAccount({
+      sourceSecret: user.stellar_secret_key,
+      destinationPublicKey: destination,
+    });
+
+    // Update user's wallet keys to the destination account
+    // The destination public key is now the user's wallet; secret is unknown to us
+    // so we clear the secret key (user controls destination externally)
+    await db.query(
+      "UPDATE users SET stellar_public_key = $1, stellar_secret_key = NULL WHERE id = $2",
+      [destination, req.user.id],
+    );
+
+    return res.json({ success: true, txHash, destination });
+  } catch (e) {
+    if (e.code === "destination_not_found") {
+      return err(res, 400, e.message, "destination_not_found");
+    }
+    const stellarMsg =
+      e?.response?.data?.extras?.result_codes?.operations?.[0] || e.message;
+    return res.status(502).json({
+      success: false,
+      error: `Stellar transaction failed: ${stellarMsg}`,
+    });
+  }
 });
 
 module.exports = router;

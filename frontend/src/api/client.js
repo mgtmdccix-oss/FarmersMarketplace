@@ -375,6 +375,7 @@ export const api = {
   removeTrustline:(body)       => request('/wallet/trustline', { method: 'DELETE', body }),
   getWalletAssets: ()          => request('/wallet/assets'),
   getPathEstimate: (params)    => request(`/wallet/path-estimate${toQs(params)}`),
+  mergeWallet:    (body)       => request('/wallet/merge', { method: 'POST', body }),
   deleteAccount:   (force)     => request(`/auth/account${force ? '?force=true' : ''}`, { method: 'DELETE' }),
   // Returns the SSE URL with the token embedded (EventSource can't set headers)
   getWalletStreamUrl: ()       => `/api/wallet/stream?token=${encodeURIComponent(accessToken || '')}`,
