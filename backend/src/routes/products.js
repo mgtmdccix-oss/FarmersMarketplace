@@ -11,6 +11,13 @@ const AutomaticOrderProcessor = require('../services/AutomaticOrderProcessor');
 
 const VALID_ALLERGENS = ['gluten', 'nuts', 'dairy', 'eggs', 'soy', 'shellfish'];
 
+function parseAllowedRegions(value) {
+  if (value === undefined || value === null) return null;
+  const arr = Array.isArray(value) ? value : [];
+  if (arr.length === 0) return null;
+  return JSON.stringify(arr.map((c) => String(c).toUpperCase().trim()).filter(Boolean));
+}
+
 function parseAndValidateAllergens(value) {
   if (value === undefined || value === null) return { allergens: null };
   const arr = Array.isArray(value) ? value : [];
@@ -658,8 +665,8 @@ router.post('/', auth, validate.product, async (req, res) => {
     ]
   );
 
-    'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, low_stock_threshold, nutrition, pricing_type, min_weight, max_weight, allergens) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id',
-    [req.user.id, safeName, safeDescription, safeCategory, price, quantity, safeUnit, safeImageUrl, parseInt(req.body.low_stock_threshold) || 5, nutrition ? JSON.stringify(nutrition) : null, pricingType, minWeight, maxWeight, allergenResult.allergens]
+    'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, low_stock_threshold, nutrition, pricing_type, min_weight, max_weight, allergens, allowed_regions) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id',
+    [req.user.id, safeName, safeDescription, safeCategory, price, quantity, safeUnit, safeImageUrl, parseInt(req.body.low_stock_threshold) || 5, nutrition ? JSON.stringify(nutrition) : null, pricingType, minWeight, maxWeight, allergenResult.allergens, parseAllowedRegions(req.body.allowed_regions)]
   );
   await cache.del('products:{}');
   res.json({ success: true, id: rows[0].id, message: 'Product listed' });
@@ -679,7 +686,7 @@ router.patch('/:id', auth, async (req, res) => {
   ];
   const allowed = ['name', 'description', 'price', 'quantity', 'unit', 'category', 'low_stock_threshold', 'carbon_kg_per_unit'];
   const allowed = ['name', 'description', 'price', 'quantity', 'unit', 'category', 'low_stock_threshold', 'nutrition', 'pricing_type', 'min_weight', 'max_weight', 'min_order_quantity'];
-  const allowed = ['name', 'description', 'price', 'quantity', 'unit', 'category', 'low_stock_threshold', 'nutrition', 'pricing_type', 'min_weight', 'max_weight', 'allergens'];
+  const allowed = ['name', 'description', 'price', 'quantity', 'unit', 'category', 'low_stock_threshold', 'nutrition', 'pricing_type', 'min_weight', 'max_weight', 'allergens', 'allowed_regions'];
   const updates = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
@@ -791,6 +798,10 @@ router.patch('/:id', auth, async (req, res) => {
     const allergenResult = parseAndValidateAllergens(updates.allergens);
     if (allergenResult.error) return err(res, 400, allergenResult.error, 'validation_error');
     updates.allergens = allergenResult.allergens;
+  }
+
+  if (updates.allowed_regions !== undefined) {
+    updates.allowed_regions = parseAllowedRegions(updates.allowed_regions);
   }
 
   const keys   = Object.keys(updates);

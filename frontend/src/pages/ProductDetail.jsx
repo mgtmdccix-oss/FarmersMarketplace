@@ -832,6 +832,18 @@ export default function ProductDetail() {
         )}
         {error && <div style={s.err}>{error}</div>}
 
+        {/* Region restriction notice */}
+        {(() => {
+          let regions = [];
+          try { regions = product.allowed_regions ? JSON.parse(product.allowed_regions) : []; } catch {}
+          if (!regions.length) return null;
+          return (
+            <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fff8e1', border: '1px solid #f9a825', borderRadius: 8, fontSize: 13, color: '#5d4037' }}>
+              🌍 Available in: <strong>{regions.join(', ')}</strong>
+            </div>
+          );
+        })()}
+
         {/* Availability Calendar */}
         {calendar.length > 0 && (
           <div style={{ marginBottom: 20 }}>

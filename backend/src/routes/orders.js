@@ -25,6 +25,7 @@ const { sendPushToUser } = require('../utils/pushNotifications');
 const { err } = require('../middleware/error');
 const { getCachedResponse, cacheResponse } = require('../utils/idempotency');
 const { resolveCoupon, calcDiscount } = require('./coupons');
+const { checkGeoFence } = require('../utils/geocheck');
 
 function parsePreorderUnlockUnix(preorderDeliveryDate) {
   const ms = Date.parse(`${preorderDeliveryDate}T00:00:00Z`);
@@ -108,6 +109,11 @@ router.post('/', auth, validate.order, async (req, res) => {
 
   const { rows: buyerRows } = await db.query('SELECT * FROM users WHERE id = $1', [req.user.id]);
   const buyer = buyerRows[0];
+
+  // Geo-fence check
+  const clientIp = (req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').split(',')[0].trim();
+  const { allowed: geoAllowed } = await checkGeoFence(product, buyer, clientIp);
+  if (!geoAllowed) return err(res, 403, 'Not available in your region', 'region_restricted');
 
   const weight = req.body.weight ? parseFloat(req.body.weight) : null;
   if (product.pricing_type === 'weight') {

@@ -34,6 +34,7 @@ const EMPTY_FORM = {
   is_preorder: false,
   preorder_delivery_date: '',
   allergens: [],
+  allowed_regions: [],
   nutrition: {
     calories: '',
     protein: '',
@@ -432,6 +433,7 @@ export default function Dashboard() {
         max_weight: form.pricing_type === 'weight' ? parseFloat(form.max_weight) : undefined,
         min_order_quantity: form.min_order_quantity ? parseInt(form.min_order_quantity) : undefined,
         allergens: form.allergens && form.allergens.length > 0 ? form.allergens : undefined,
+        allowed_regions: form.allowed_regions && form.allowed_regions.length > 0 ? form.allowed_regions : undefined,
       });
       setMsg({ type: 'ok', text: t('dashboard.productListedOk') });
       setForm({ ...EMPTY_FORM });
@@ -632,6 +634,44 @@ export default function Dashboard() {
                       aria-pressed={selected}
                     >
                       {selected ? '✕ ' : ''}{a.charAt(0).toUpperCase() + a.slice(1)}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Region restriction selector */}
+            <div style={{ marginBottom: 12 }}>
+              <label style={s.label}>Allowed Regions <span style={{ color: '#aaa', fontWeight: 400 }}>(leave empty for no restriction)</span></label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {[
+                  { code: 'US', label: '🇺🇸 US' }, { code: 'GB', label: '🇬🇧 GB' },
+                  { code: 'KE', label: '🇰🇪 KE' }, { code: 'NG', label: '🇳🇬 NG' },
+                  { code: 'ZA', label: '🇿🇦 ZA' }, { code: 'GH', label: '🇬🇭 GH' },
+                  { code: 'IN', label: '🇮🇳 IN' }, { code: 'AU', label: '🇦🇺 AU' },
+                  { code: 'CA', label: '🇨🇦 CA' }, { code: 'DE', label: '🇩🇪 DE' },
+                ].map(({ code, label }) => {
+                  const selected = (form.allowed_regions || []).includes(code);
+                  return (
+                    <button
+                      key={code}
+                      type="button"
+                      style={{
+                        padding: '5px 10px', borderRadius: 6, fontSize: 13, cursor: 'pointer',
+                        border: selected ? '1px solid #2d6a4f' : '1px solid #ddd',
+                        background: selected ? '#d8f3dc' : '#fff',
+                        color: selected ? '#2d6a4f' : '#555',
+                        fontWeight: selected ? 700 : 400,
+                      }}
+                      onClick={() => setForm(f => ({
+                        ...f,
+                        allowed_regions: selected
+                          ? (f.allowed_regions || []).filter(x => x !== code)
+                          : [...(f.allowed_regions || []), code],
+                      }))}
+                      aria-pressed={selected}
+                    >
+                      {label}
                     </button>
                   );
                 })}
