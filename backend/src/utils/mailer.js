@@ -94,10 +94,23 @@ async function sendReturnEmail({ type, order, buyer, farmer, reason, txHash, rej
   }
 }
 
+async function sendContractAlert({ to, alert }) {
+  if (!process.env.SMTP_HOST) return;
+  const typeLabel = alert.alert_type === 'failed_invocations' ? '⚠️ Failed Invocations' : '🚨 Large Transfer';
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject: `[Contract Alert] ${typeLabel} – ${alert.contract_id}`,
+    text: `Admin Alert\n\nType: ${alert.alert_type}\nContract: ${alert.contract_id}\n\n${alert.message}\n\nTime: ${alert.created_at}\n\nLog in to the admin dashboard to acknowledge this alert.\n\nFarmers Marketplace`,
+  });
+}
+
 module.exports = {
+  transporter,
   sendOrderEmails,
   sendLowStockAlert,
   sendStatusUpdateEmail,
   sendBackInStockEmail,
   sendReturnEmail,
+  sendContractAlert,
 };

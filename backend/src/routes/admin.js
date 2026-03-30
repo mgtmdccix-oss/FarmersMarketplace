@@ -641,4 +641,33 @@ router.post('/contracts/:id/analyze-fees', async (req, res) => {
   }
 });
 
+// ── Contract Alerts ────────────────────────────────────────────────────────
+
+// GET /api/admin/contract-alerts
+router.get('/contract-alerts', async (req, res) => {
+  const { acknowledged } = req.query;
+  const conditions = [];
+  const params = [];
+  if (acknowledged !== undefined) {
+    conditions.push(`acknowledged = $${params.length + 1}`);
+    params.push(acknowledged === 'true' ? 1 : 0);
+  }
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const { rows } = await db.query(
+    `SELECT * FROM contract_alerts ${where} ORDER BY created_at DESC LIMIT 200`,
+    params
+  );
+  res.json({ success: true, data: rows });
+});
+
+// PATCH /api/admin/contract-alerts/:id/acknowledge
+router.patch('/contract-alerts/:id/acknowledge', async (req, res) => {
+  const { rowCount } = await db.query(
+    `UPDATE contract_alerts SET acknowledged = 1 WHERE id = $1`,
+    [req.params.id]
+  );
+  if (!rowCount) return res.status(404).json({ success: false, error: 'Alert not found' });
+  res.json({ success: true });
+});
+
 module.exports = router;

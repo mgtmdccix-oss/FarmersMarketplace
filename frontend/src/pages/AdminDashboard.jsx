@@ -81,6 +81,25 @@ export default function AdminDashboard() {
   const [aclForm, setAclForm] = useState({ address: '', role: 'admin' });
   const [aclMsg, setAclMsg] = useState('');
 
+  // Contract alerts
+  const [contractAlerts, setContractAlerts] = useState([]);
+  const [alertsFilter, setAlertsFilter] = useState('unacknowledged');
+  const [alertsLoading, setAlertsLoading] = useState(false);
+
+  async function loadContractAlerts(filter = alertsFilter) {
+    setAlertsLoading(true);
+    try {
+      const acknowledged = filter === 'all' ? undefined : filter === 'acknowledged' ? true : false;
+      const res = await api.adminGetContractAlerts(acknowledged);
+      setContractAlerts(res.data ?? []);
+    } catch (e) { console.error(e); }
+    finally { setAlertsLoading(false); }
+  }
+
+  async function acknowledgeAlert(id) {
+    await api.adminAcknowledgeContractAlert(id);
+    loadContractAlerts();
+  }
   // Contract invocation history
   const [invocRegistryId, setInvocRegistryId] = useState('');
   const [invocFilters, setInvocFilters] = useState({ method: '', from: '', to: '' });
@@ -108,6 +127,7 @@ export default function AdminDashboard() {
     loadStats();
     loadUsers(1);
     loadContracts();
+    loadContractAlerts('unacknowledged');
     loadAnnouncements();
   }, []);
 
@@ -982,6 +1002,62 @@ export default function AdminDashboard() {
         )}
       </div>
 
+      {/* Contract Alerts */}
+      <div style={{ background: '#fff', borderRadius: 12, padding: 24, boxShadow: '0 1px 8px #0001', marginBottom: 24 }}>
+        <h3 style={{ marginBottom: 16, color: '#333' }}>🚨 Contract Monitoring Alerts</h3>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+          {['unacknowledged', 'acknowledged', 'all'].map((f) => (
+            <button
+              key={f}
+              onClick={() => { setAlertsFilter(f); loadContractAlerts(f); }}
+              style={{ padding: '6px 14px', borderRadius: 8, border: '1px solid #ddd', cursor: 'pointer', fontWeight: alertsFilter === f ? 700 : 400, background: alertsFilter === f ? '#2d6a4f' : '#fff', color: alertsFilter === f ? '#fff' : '#333' }}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)}
+            </button>
+          ))}
+        </div>
+        {alertsLoading ? (
+          <div style={{ color: '#888', fontSize: 14 }}>Loading…</div>
+        ) : contractAlerts.length === 0 ? (
+          <div style={{ color: '#888', fontSize: 14 }}>No alerts.</div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+            <thead>
+              <tr style={{ borderBottom: '2px solid #eee', textAlign: 'left' }}>
+                <th style={{ padding: '8px 10px' }}>Contract ID</th>
+                <th style={{ padding: '8px 10px' }}>Type</th>
+                <th style={{ padding: '8px 10px' }}>Message</th>
+                <th style={{ padding: '8px 10px' }}>Time</th>
+                <th style={{ padding: '8px 10px' }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {contractAlerts.map((a) => (
+                <tr key={a.id} style={{ borderBottom: '1px solid #f0f0f0', background: a.acknowledged ? '#fafafa' : '#fffbf0' }}>
+                  <td style={{ padding: '8px 10px', fontFamily: 'monospace', fontSize: 12 }}>{a.contract_id}</td>
+                  <td style={{ padding: '8px 10px' }}>
+                    <span style={{ background: a.alert_type === 'large_transfer' ? '#ffeaa7' : '#fde8e8', color: a.alert_type === 'large_transfer' ? '#b8860b' : '#c0392b', borderRadius: 4, padding: '2px 8px', fontWeight: 600, fontSize: 12 }}>
+                      {a.alert_type}
+                    </span>
+                  </td>
+                  <td style={{ padding: '8px 10px', color: '#444' }}>{a.message}</td>
+                  <td style={{ padding: '8px 10px', color: '#888', whiteSpace: 'nowrap' }}>{new Date(a.created_at).toLocaleString()}</td>
+                  <td style={{ padding: '8px 10px' }}>
+                    {!a.acknowledged && (
+                      <button
+                        onClick={() => acknowledgeAlert(a.id)}
+                        style={{ padding: '4px 12px', borderRadius: 6, border: 'none', background: '#d8f3dc', color: '#2d6a4f', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}
+                      >
+                        Acknowledge
+                      </button>
+                    )}
+                    {!!a.acknowledged && <span style={{ color: '#aaa', fontSize: 12 }}>✓ Acknowledged</span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       {/* Contract Invocation History */}
       <div style={{ ...s.card, marginTop: 32 }}>
         <h3 style={{ marginBottom: 16, color: '#333' }}>📑 Contract Invocation History</h3>
