@@ -187,15 +187,28 @@ async function getTransactions(publicKey) {
   }
 }
 
-module.exports = {
-  isTestnet,
-  server,
-  createWallet,
-  fundTestnetAccount,
-  getBalance,
-  sendPayment,
-  getTransactions,
-};
+function generatePaymentLink({ destination, amount, memo, memoType = 'text', assetCode = 'XLM', assetIssuer }) {
+  if (!destination) throw new Error('destination is required for SEP-0007 link');
+  if (!amount || Number.isNaN(parseFloat(amount))) throw new Error('valid amount is required for SEP-0007 link');
+
+  const url = new URL('web+stellar:pay');
+  url.searchParams.set('destination', destination);
+  url.searchParams.set('amount', Number(amount).toFixed(7));
+
+  if (memo != null) {
+    url.searchParams.set('memo', String(memo));
+    url.searchParams.set('memo_type', memoType);
+  }
+
+  if (assetCode && assetCode.toUpperCase() !== 'XLM') {
+    url.searchParams.set('asset_code', assetCode);
+    if (!assetIssuer) {
+      throw new Error('assetIssuer is required for non-native SEP-0007 assets');
+    }
+    url.searchParams.set('asset_issuer', assetIssuer);
+  }
+
+  return url.toString();
 // In-memory cache: publicKey -> { federationAddress, expiresAt }
 const _federationCache = new Map();
 const FEDERATION_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -235,8 +248,15 @@ module.exports = {
   getBalance,
   sendPayment,
   getTransactions,
+  generatePaymentLink,
 };
-async function createClaimableBalance({ senderSecret, farmerPublicKey, buyerPublicKey, amount }) {
+
+async function createClaimableBalance({
+  senderSecret,
+  farmerPublicKey,
+  buyerPublicKey,
+  amount,
+}) {
   const senderKeypair = StellarSdk.Keypair.fromSecret(senderSecret);
   const senderAccount = await server.loadAccount(senderKeypair.publicKey());
 
@@ -968,6 +988,161 @@ async function mergeAccount({ sourceSecret, destinationPublicKey }) {
   tx.sign(sourceKeypair);
   const result = await server.submitTransaction(tx);
   return result.hash;
+}
+
+/**
+ * Fetch and decode Soroban contract ABI from contract metadata.
+ * Returns parsed function signatures with parameters and return types.
+ * @param {string} contractId - Contract address (base32 or hex)
+ * @returns {Promise<Array>} Array of function objects with name, params, and return type
+ */
+async function getContractABI(contractId) {
+  const sorobanRpcUrl =
+    process.env.SOROBAN_RPC_URL ||
+    (isTestnet
+      ? "https://soroban-testnet.stellar.org"
+      : "https://soroban.stellar.org");
+  const sorobanServer = new StellarSdk.SorobanRpc.Server(sorobanRpcUrl);
+
+  try {
+    const contractAddress = new StellarSdk.Address(contractId);
+    const ledgerKey = StellarSdk.xdr.LedgerKey.contractData(
+      new StellarSdk.xdr.LedgerKeyContractData({
+        contract: contractAddress.toScAddress(),
+        key: StellarSdk.xdr.ScVal.scvLedgerKeyContractInstance(),
+        durability: StellarSdk.xdr.ContractDataDurability.persistent(),
+      })
+    );
+
+    const response = await sorobanServer.getLedgerEntries(ledgerKey);
+    const entries = response.entries || [];
+    if (!entries.length) {
+      const err = new Error("Contract not found");
+      err.code = 404;
+      throw err;
+    }
+
+    const entry = entries[0];
+    const data = entry.val?.contractData?.();
+    if (!data) {
+      const err = new Error("Cannot parse contract data");
+      err.code = "parse_error";
+      throw err;
+    }
+
+    const scVal = data.val();
+    let instance;
+    try {
+      instance = scVal.contractInstance();
+    } catch {
+      const err = new Error("Contract data is not a contract instance");
+      err.code = "parse_error";
+      throw err;
+    }
+
+    // Extract ABI from contract spec
+    const spec = instance.contractSpec?.();
+    if (!spec || !spec.length) {
+      return []; // No spec available
+    }
+
+    const functions = [];
+    for (const specEntry of spec) {
+      const xdrType = specEntry.switch?.();
+      if (!xdrType || xdrType.name !== "UdtStructV0") continue;
+
+      const struct = specEntry.value?.();
+      if (!struct) continue;
+
+      const fields = struct.fields?.() || [];
+      const funcName = struct.name?.();
+
+      const params = [];
+      for (const field of fields) {
+        params.push({
+          name: field.name?.(),
+          type: field.type?.switch?.()?.name || "unknown",
+        });
+      }
+
+      functions.push({
+        name: funcName,
+        params,
+        returnType: "void",
+      });
+    }
+
+    return functions;
+  } catch (error) {
+    if (error.code === 404) throw error;
+    console.error("[Stellar] Error fetching contract ABI:", error.message);
+    return [];
+  }
+}
+
+/**
+ * Simulate contract invocations and return resource usage breakdown.
+ * @param {string} contractId - Contract address
+ * @param {Array<{ method: string, args: Array }>} testCases - Test cases to simulate
+ * @returns {Promise<Array>} Array of fee analysis results
+ */
+async function analyzeContractFees(contractId, testCases = []) {
+  const results = [];
+
+  for (const testCase of testCases) {
+    const { method, args = [] } = testCase;
+
+    try {
+      const sim = await simulateContractCall(contractId, method, args);
+
+      if (!sim.success) {
+        results.push({
+          method,
+          args,
+          fee: null,
+          cpu_insns: null,
+          mem_bytes: null,
+          ledger_reads: null,
+          ledger_writes: null,
+          error: sim.error,
+        });
+        continue;
+      }
+
+      // Parse fee and resource usage from simulation
+      const fee = sim.fee || "0";
+      const feeNum = BigInt(fee);
+      const feeXlm = (Number(feeNum) / 10_000_000).toFixed(7);
+
+      results.push({
+        method,
+        args,
+        fee: feeXlm,
+        fee_stroops: fee,
+        cpu_insns: sim.result?.cpuInsns || null,
+        mem_bytes: sim.result?.memBytes || null,
+        ledger_reads: sim.result?.ledgerReads || null,
+        ledger_writes: sim.result?.ledgerWrites || null,
+        error: null,
+      });
+    } catch (error) {
+      results.push({
+        method,
+        args,
+        fee: null,
+        cpu_insns: null,
+        mem_bytes: null,
+        ledger_reads: null,
+        ledger_writes: null,
+        error: error.message,
+      });
+    }
+  }
+
+  return results;
+}
+
+/**
  * Fetch and decode Soroban contract events via getEvents RPC.
  * @param {string} contractId - Contract address (base32 or hex)
  * @param {{ type?: string, from?: string, to?: string, page?: number, limit?: number }} filters
@@ -1144,6 +1319,9 @@ module.exports = {
   simulateContractCall,
   getContractEvents,
   deployContract,
+  getContractABI,
+  analyzeContractFees,
   resolveFederationAddress,
   mintRewardTokens,
+  generatePaymentLink,
 };

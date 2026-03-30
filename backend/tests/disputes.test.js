@@ -4,6 +4,12 @@ const mailer = jest.requireMock('../src/utils/mailer');
 
 beforeEach(() => jest.clearAllMocks());
 
+const SECRET     = process.env.JWT_SECRET || 'secret';
+const buyerToken = jwt.sign({ id: 2, role: 'buyer'  }, SECRET);
+const adminToken = jwt.sign({ id: 9, role: 'admin'  }, SECRET);
+const farmerToken = jwt.sign({ id: 1, role: 'farmer' }, SECRET);
+
+const paidOrder = { id: 10, buyer_id: 2, product_id: 5, quantity: 2, total_price: 10, status: 'paid' };
 const SECRET = process.env.JWT_SECRET || 'secret';
 const buyerToken = jwt.sign({ id: 2, role: 'buyer' }, SECRET);
 const adminToken = jwt.sign({ id: 9, role: 'admin' }, SECRET);
@@ -21,6 +27,8 @@ const paidOrder = {
 describe('POST /api/disputes', () => {
   it('buyer files a dispute on a paid order', async () => {
     mockGet
+      .mockReturnValueOnce(paidOrder)   // order lookup
+      .mockReturnValueOnce(undefined);  // no existing dispute
       .mockReturnValueOnce(paidOrder) // order lookup
       .mockReturnValueOnce(undefined); // no existing dispute
     mockRun.mockReturnValueOnce({ lastInsertRowid: 1 });
@@ -67,6 +75,9 @@ describe('POST /api/disputes', () => {
   });
 
   it('returns 409 when dispute already exists for order', async () => {
+    mockGet
+      .mockReturnValueOnce(paidOrder)
+      .mockReturnValueOnce({ id: 5 }); // existing dispute
     mockGet.mockReturnValueOnce(paidOrder).mockReturnValueOnce({ id: 5 }); // existing dispute
     const res = await request(app)
       .post('/api/disputes')
@@ -111,6 +122,7 @@ describe('GET /api/disputes', () => {
 
 describe('PATCH /api/disputes/:id', () => {
   it('admin moves dispute from open to under_review', async () => {
+    mockGet.mockReturnValueOnce({ id: 1, status: 'open', buyer_id: 2, order_id: 10, resolution: null });
     mockGet.mockReturnValueOnce({
       id: 1,
       status: 'open',
@@ -131,6 +143,10 @@ describe('PATCH /api/disputes/:id', () => {
 
   it('admin resolves dispute with resolution note and triggers email', async () => {
     mockGet
+      .mockReturnValueOnce({ id: 1, status: 'under_review', buyer_id: 2, order_id: 10, resolution: null })
+      .mockReturnValueOnce({ id: 2, email: 'buyer@test.com', name: 'Buyer' })  // buyer
+      .mockReturnValueOnce({ id: 10, product_id: 5 })                          // order
+      .mockReturnValueOnce({ id: 5, name: 'Apples' });                         // product
       .mockReturnValueOnce({
         id: 1,
         status: 'under_review',
@@ -151,6 +167,7 @@ describe('PATCH /api/disputes/:id', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe('resolved');
     // Email is fire-and-forget, just verify it was called
+    await new Promise(r => setTimeout(r, 10));
     await new Promise((r) => setTimeout(r, 10));
     expect(mailer.sendDisputeResolvedEmail).toHaveBeenCalled();
   });

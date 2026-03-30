@@ -264,6 +264,9 @@ router.use('/api/wallet/fund', fundLimiter);
 router.use('/api/v1/wallet/fund', fundLimiter);
 router.use('/api/wallet/send', sendLimiter);
 
+// Export routes (must be before /products and /orders to avoid /:id catch-all)
+router.use("/api", require("./export"));
+
 // Routes
 router.use("/api/auth", require("./auth"));
 router.use("/api/products", require("./products"));
@@ -325,6 +328,7 @@ router.use('/api/analytics', require('./analytics'));
 router.use('/api/admin', require('./admin'));
 router.use('/api/farmers', require('./farmers'));
 router.use('/api/rates', require('./rates'));
+router.use('/api/recommendations', require('./recommendations'));
 router.use('/api/favorites', require('./favorites'));
 router.use('/api/addresses', require('./addresses'));
 router.use('/api/messages', require('./messages'));
@@ -351,6 +355,7 @@ router.use('/api/analytics', require('./analytics'));
 router.use('/api/admin', require('./admin'));
 router.use('/api/farmers', require('./farmers'));
 router.use('/api/rates', require('./rates'));
+router.use('/api/recommendations', require('./recommendations'));
 router.use('/api/favorites', require('./favorites'));
 router.use('/api/addresses', require('./addresses'));
 router.use('/api/messages', require('./messages'));
@@ -387,6 +392,7 @@ router.use('/api/analytics', require('./analytics'));
 router.use('/api/admin', require('./admin'));
 router.use('/api/farmers', require('./farmers'));
 router.use('/api/rates', require('./rates'));
+router.use('/api/recommendations', require('./recommendations'));
 router.use('/api', require('./reviews'));
 router.use('/api/favorites', require('./favorites'));
 router.use('/api/auth', require('./auth'));
@@ -398,9 +404,11 @@ router.use('/api/analytics', require('./analytics'));
 router.use('/api/admin', require('./admin'));
 router.use('/api/farmers', require('./farmers'));
 router.use('/api/rates', require('./rates'));
+router.use('/api/recommendations', require('./recommendations'));
 router.use('/api', require('./reviews'));
 router.use('/api/favorites', require('./favorites'));
 router.use('/api/rates', require('./rates'));
+router.use('/api/recommendations', require('./recommendations'));
 router.use('/api', require('./reviews'));
 
 // QR code endpoint (mounted under products so /:id/qr resolves correctly)
