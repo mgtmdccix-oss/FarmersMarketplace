@@ -19,6 +19,7 @@ const helmet = require('helmet');
 const { enforceHttps, hsts } = require('./middleware/https');
 const { csrfProtect, csrfTokenHandler } = require('./middleware/csrf');
 const { errorHandler } = require('./middleware/error');
+const { notFoundHandler } = require('./middleware/error');
 const { sanitizeResponse } = require('./middleware/sanitize');
 const requestLogger = require('./middleware/requestLogger');
 
@@ -95,6 +96,7 @@ if (process.env.NODE_ENV !== 'test') {
 }
 
 app.use(require('./routes'));
+app.use(notFoundHandler);
 app.use(errorHandler);
 
 // Start background jobs (skip in test to avoid open handles)
