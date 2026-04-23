@@ -83,7 +83,7 @@ describe('POST /api/orders', () => {
     expect(res.status).toBe(403);
   });
 
-  it('returns 400 when stock is insufficient', async () => {
+  it('returns 409 when stock is insufficient', async () => {
     stellar.getBalance.mockResolvedValueOnce(9999);
     mockDb.query
       .mockResolvedValueOnce({ rows: [product], rowCount: 1 })
@@ -95,8 +95,8 @@ describe('POST /api/orders', () => {
       .set('Authorization', `Bearer ${buyerToken}`)
       .send({ product_id: 10, quantity: 999 });
 
-    expect(res.status).toBe(400);
-    expect(res.body.code).toBe('insufficient_stock');
+    expect(res.status).toBe(409);
+    expect(res.body.code).toBe('out_of_stock');
   });
 
   it('sets order status to "failed" when payment throws', async () => {
