@@ -588,6 +588,29 @@ router.patch('/:id', auth, async (req, res) => {
   res.json({ success: true, message: 'Product updated' });
 });
 
+router.get('/:id/images', async (req, res) => {
+  const { rows } = await db.query('SELECT * FROM product_images WHERE product_id = $1 ORDER BY sort_order ASC, id ASC', [req.params.id]);
+  res.json({ success: true, data: rows });
+});
+
+router.patch('/:id/restock', auth, async (req, res) => {
+  if (req.user.role !== 'farmer') return err(res, 403, 'Only farmers can restock', 'forbidden');
+  const quantity = parseInt(req.body.quantity, 10);
+  if (isNaN(quantity) || quantity <= 0) return err(res, 400, 'Quantity must be positive', 'validation_error');
+
+  const { rows } = await db.query('SELECT * FROM products WHERE id = $1 AND farmer_id = $2', [req.params.id, req.user.id]);
+  if (!rows[0]) return err(res, 404, 'Product not found', 'not_found');
+
+  await db.query('UPDATE products SET quantity = quantity + $1, low_stock_alerted = 0 WHERE id = $2', [quantity, req.params.id]);
+  
+  if (rows[0].quantity === 0) {
+    const processor = new AutomaticOrderProcessor();
+    await processor.processWaitlistOnRestock(parseInt(req.params.id), quantity);
+  }
+
+  res.json({ success: true, message: 'Restocked' });
+});
+
 /**
  * @swagger
  * /api/products/{id}:
@@ -616,11 +639,35 @@ router.patch('/:id', auth, async (req, res) => {
  *         content:
  *           application/json:
  *             schema: { $ref: '#/components/schemas/Error' }
+ *       409:
+ *         description: Conflict - product has open or paid orders
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 error: { type: string }
+ *                 code: { type: string }
+ *                 openOrders: { type: array }
  */
 // DELETE /api/products/:id
 router.delete('/:id', auth, async (req, res) => {
-  const { rows } = await db.query('SELECT * FROM products WHERE id = $1 AND farmer_id = $2', [req.params.id, req.user.id]);
-  if (!rows[0]) return err(res, 404, 'Not found or not yours', 'not_found');
+  const { rows: productRows } = await db.query('SELECT * FROM products WHERE id = $1 AND farmer_id = $2', [req.params.id, req.user.id]);
+  if (!productRows[0]) return err(res, 404, 'Not found or not yours', 'not_found');
+
+  // Check for open or paid orders
+  const { rows: orderRows } = await db.query(
+    `SELECT id, status FROM orders WHERE product_id = $1 AND status IN ('pending', 'paid', 'disputed')`,
+    [req.params.id]
+  );
+
+  if (orderRows.length > 0) {
+    return err(res, 409, 'Cannot delete product with open or paid orders', 'conflict', {
+      openOrders: orderRows.map(o => ({ id: o.id, status: o.status })),
+    });
+  }
+
   await db.query('DELETE FROM products WHERE id = $1', [req.params.id]);
   await cache.del('products:{}');
   res.json({ success: true, message: 'Deleted' });

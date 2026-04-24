@@ -4,6 +4,7 @@ const db = require('../db/schema');
 const auth = require('../middleware/auth');
 const validate = require('../middleware/validate');
 const cache = require('../cache');
+const createPerUserRateLimiter = require('../middleware/rateLimitPerUser');
 const {
   isTestnet,
   getBalance,
@@ -62,10 +63,11 @@ router.get('/', auth, async (req, res) => {
   if (cached) return res.json(cached);
 
   try {
-    const { rows } = await db.query(
-      'SELECT stellar_public_key, referral_code FROM users WHERE id = $1',
-      [req.user.id]
-    );
+    const cacheKey = `wallet:${req.user.id}`;
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
+    const { rows } = await db.query('SELECT stellar_public_key, referral_code FROM users WHERE id = $1', [req.user.id]);
     const user = rows[0];
     if (!user) return err(res, 404, 'User not found', 'user_not_found');
 
@@ -84,6 +86,7 @@ router.get('/', auth, async (req, res) => {
       referralCode: user.referral_code,
     };
     await cache.set(cacheKey, payload, 30);
+    res.json(payload);
     return res.json(payload);
   } catch (e) {
     return err(res, 500, e.message, 'wallet_error');
@@ -153,8 +156,34 @@ router.get('/transactions', auth, async (req, res) => {
  *   post:
  *     summary: Fund testnet account (Stellar Friendbot)
  *     tags: [Wallet]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Account funded successfully
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 message: { type: string }
+ *                 balance: { type: number }
+ *       429:
+ *         description: Rate limit exceeded (3 requests per hour)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 error: { type: string }
+ *                 code: { type: string }
+ *                 retryAfter: { type: number }
  */
-router.post('/fund', auth, async (req, res) => {
+const fundLimiter = createPerUserRateLimiter(3, 60 * 60 * 1000); // 3 requests per hour
+
+router.post('/fund', auth, fundLimiter, async (req, res) => {
   if (!isTestnet) return err(res, 400, 'Only available on testnet', 'testnet_only');
 
   const { rows } = await db.query('SELECT stellar_public_key FROM users WHERE id = $1', [
