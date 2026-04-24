@@ -19,10 +19,12 @@ async function getBudgetSummary(userId) {
   const monthlyBudget =
     userRows[0]?.monthly_budget != null ? Number(userRows[0].monthly_budget) : null;
 
+  // Include both pending and paid orders so the displayed spend matches the
+  // budget guard logic and users can see in-flight orders counted against their budget.
   const { rows: spendRows } = await db.query(
     `SELECT COALESCE(SUM(total_price), 0) AS spent
      FROM orders
-     WHERE buyer_id = $1 AND status = 'paid' AND created_at >= $2 AND created_at < $3`,
+     WHERE buyer_id = $1 AND status IN ('pending', 'paid') AND created_at >= $2 AND created_at < $3`,
     [userId, start, end]
   );
 
