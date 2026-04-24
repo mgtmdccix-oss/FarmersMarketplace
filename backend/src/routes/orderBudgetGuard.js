@@ -16,8 +16,8 @@
  *   The lock is released automatically when the DB client is released back to
  *   the pool (end of request).
  *
- *   On SQLite (local dev) the single-writer nature of the engine provides the
- *   same serialisation guarantee without extra locking.
+ *   On SQLite (local dev / test) we use a per-user JS promise-chain mutex so
+ *   concurrent async checks for the same buyer are serialised in the event loop.
  *
  * TRANSACTION FLOW:
  *   1. Acquire advisory lock for this buyer (Postgres only).
@@ -31,6 +31,15 @@
 const db = require('../db/schema');
 const auth = require('../middleware/auth');
 const router = require('express').Router();
+
+/**
+ * Per-user mutex for the non-Postgres path.
+ * Maps userId → Promise (the tail of the current serialised chain).
+ * Each new request appends itself to the chain so budget checks are
+ * processed one-at-a-time per buyer, preventing concurrent reads from
+ * both seeing the same (stale) spend total.
+ */
+const userLocks = new Map();
 
 function getMonthRangeUtc() {
   const now = new Date();
@@ -125,41 +134,72 @@ router.post('/', auth, async (req, res, next) => {
         throw lockErr;
       }
     } else {
-      // --- SQLite path: simple serialised query (SQLite is single-writer) ---
-      const { rows: userRows } = await db.query(
-        'SELECT monthly_budget FROM users WHERE id = $1',
-        [req.user.id],
-      );
-      const monthlyBudget = userRows[0]?.monthly_budget;
+      // --- Non-Postgres path: JS mutex serialises concurrent checks per buyer ---
+      const userId = req.user.id;
 
-      if (monthlyBudget == null) return next();
+      // Build a serialised chain: each request waits for the previous one to finish.
+      const prev = userLocks.get(userId) || Promise.resolve();
+      let releaseLock;
+      const lockPromise = new Promise((resolve) => { releaseLock = resolve; });
+      userLocks.set(userId, prev.then(() => lockPromise));
 
-      const { start, end } = getMonthRangeUtc();
+      // Wait for our turn
+      await prev;
 
-      const { rows: spendRows } = await db.query(
-        `SELECT COALESCE(SUM(total_price), 0) AS spent
-         FROM orders
-         WHERE buyer_id = $1
-           AND status IN ('pending', 'paid')
-           AND created_at >= $2
-           AND created_at < $3`,
-        [req.user.id, start, end],
-      );
+      try {
+        const { rows: userRows } = await db.query(
+          'SELECT monthly_budget FROM users WHERE id = $1',
+          [req.user.id],
+        );
+        const monthlyBudget = userRows[0]?.monthly_budget;
 
-      const spent = Number(spendRows[0]?.spent || 0);
-      const budget = Number(monthlyBudget);
+        if (monthlyBudget == null) {
+          releaseLock();
+          return next();
+        }
 
-      if (spent + newOrderPrice > budget && !overrideConfirmed) {
-        return res.status(400).json({
-          success: false,
-          error: 'Monthly budget exceeded. Set budget_override_confirmed=true to continue.',
-          code: 'budget_exceeded',
-          budget,
-          spentThisMonth: spent,
+        const { start, end } = getMonthRangeUtc();
+
+        // Include both pending and paid orders to prevent race-condition overspending.
+        const { rows: spendRows } = await db.query(
+          `SELECT COALESCE(SUM(total_price), 0) AS spent
+           FROM orders
+           WHERE buyer_id = $1
+             AND status IN ('pending', 'paid')
+             AND created_at >= $2
+             AND created_at < $3`,
+          [req.user.id, start, end],
+        );
+
+        const spent = Number(spendRows[0]?.spent || 0);
+        const budget = Number(monthlyBudget);
+
+        if (spent + newOrderPrice > budget && !overrideConfirmed) {
+          releaseLock();
+          return res.status(400).json({
+            success: false,
+            error: 'Monthly budget exceeded. Set budget_override_confirmed=true to continue.',
+            code: 'budget_exceeded',
+            budget,
+            spentThisMonth: spent,
+          });
+        }
+
+        // Pass control to the order route; release the lock after next() returns
+        // so the INSERT happens while the lock is still held, preventing a second
+        // concurrent request from reading the pre-insert spend total.
+        await new Promise((resolve, reject) => {
+          next();
+          // next() is synchronous in Express — resolve immediately so the lock
+          // is released only after the downstream handler has had a chance to run.
+          setImmediate(resolve);
         });
+        releaseLock();
+        return;
+      } catch (e) {
+        releaseLock();
+        throw e;
       }
-
-      return next();
     }
   } catch (e) {
     return res.status(500).json({
