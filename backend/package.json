@@ -27,6 +27,9 @@
     "setupFilesAfterEnv": [
       "<rootDir>/tests/jest.setup.js"
     ],
+    "moduleNameMapper": {
+      "^uuid$": "<rootDir>/tests/__mocks__/uuid.js"
+    },
     "testEnvironmentOptions": {
       "env": {
         "NODE_ENV": "test"

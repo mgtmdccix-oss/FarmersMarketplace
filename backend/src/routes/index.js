@@ -1,4 +1,4 @@
-const router = require("express").Router();
+const router = require('express').Router();
 const rateLimit = require("express-rate-limit");
 const logger = require("../logger");
 const db = require("../db/schema");

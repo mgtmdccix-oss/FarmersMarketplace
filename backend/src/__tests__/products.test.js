@@ -17,6 +17,14 @@ jest.mock('../cache', () => ({
   del: jest.fn().mockResolvedValue(undefined),
 }));
 
+// Mount only the products router to avoid loading broken sibling route files
+jest.mock('../routes', () => {
+  const express = require('express');
+  const router = express.Router();
+  router.use('/api/products', require('../routes/products'));
+  return router;
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockDb.query = jest.fn().mockResolvedValue({ rows: [], rowCount: 0 });
@@ -191,6 +199,56 @@ describe('GET /api/products/mine/list', () => {
   });
 });
 
+describe('PATCH /api/products/:id', () => {
+  it('update to quantity 0 succeeds', async () => {
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ id: 1, farmer_id: FARMER_ID, quantity: 10 }], rowCount: 1 }) // SELECT existing
+      .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // UPDATE
+    const res = await request(app)
+      .patch('/api/products/1')
+      .set('Authorization', `Bearer ${farmerToken}`)
+      .send({ quantity: 0 });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+  });
+
+  it('product with quantity 0 is hidden from GET /api/products', async () => {
+    // GET /api/products defaults to available=true which filters quantity > 0
+    mockDb.query
+      .mockResolvedValueOnce({ rows: [{ count: '0' }], rowCount: 1 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    const res = await request(app).get('/api/products');
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual([]);
+  });
+
+  it('product with quantity 0 is still visible in GET /api/products/mine/list', async () => {
+    mockDb.query.mockResolvedValueOnce({
+      rows: [{ id: 1, name: 'Tomatoes', quantity: 0, farmer_id: FARMER_ID }],
+      rowCount: 1,
+    });
+    const res = await request(app)
+      .get('/api/products/mine/list')
+      .set('Authorization', `Bearer ${farmerToken}`);
+    expect(res.status).toBe(200);
+    expect(res.body.data[0].quantity).toBe(0);
+  });
+
+  it('returns 400 for negative quantity', async () => {
+    mockDb.query.mockResolvedValueOnce({ rows: [{ id: 1, farmer_id: FARMER_ID }], rowCount: 1 });
+    const res = await request(app)
+      .patch('/api/products/1')
+      .set('Authorization', `Bearer ${farmerToken}`)
+      .send({ quantity: -1 });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 403 for non-farmer', async () => {
+    const res = await request(app)
+      .patch('/api/products/1')
+      .set('Authorization', `Bearer ${buyerToken}`)
+      .send({ quantity: 5 });
+    expect(res.status).toBe(403);
 // ---------------------------------------------------------------------------
 // #388 — product listing cache role isolation
 // ---------------------------------------------------------------------------

@@ -52,6 +52,10 @@ router.get('/', async (req, res) => {
   const cacheKey = `products:${JSON.stringify(req.query)}`;
   const cached = await cache.get(cacheKey);
   if (cached) return res.json(cached);
+  const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+  const offset = (page - 1) * limit;
+  const { category, minPrice, maxPrice, seller, available = 'true', lat, lng, radius } = req.query;
 
   const page = Math.max(1, parseInt(req.query.page, 10) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
@@ -62,6 +66,12 @@ router.get('/', async (req, res) => {
   const params = [];
 
   if (available === 'true') conditions.push('p.quantity > 0');
+  conditions.push(`p.best_before IS NULL OR p.best_before >= CURRENT_DATE`);
+  if (category)   { conditions.push(`p.category = $${params.length + 1}`);        params.push(category); }
+  if (minPrice !== undefined) { const min = parseFloat(minPrice); if (!isNaN(min)) { conditions.push(`p.price >= $${params.length + 1}`); params.push(min); } }
+  if (maxPrice !== undefined) { const max = parseFloat(maxPrice); if (!isNaN(max)) { conditions.push(`p.price <= $${params.length + 1}`); params.push(max); } }
+  if (seller)     { conditions.push(`u.name ILIKE $${params.length + 1}`);         params.push(`%${seller}%`); }
+  if (req.query.grade) {
   conditions.push(`(p.best_before IS NULL OR p.best_before >= CURRENT_DATE)`);
   conditions.push(`(p.best_before IS NULL OR p.best_before >= ${db.isPostgres ? 'CURRENT_DATE' : "date('now')"})`);
 
@@ -94,9 +104,9 @@ router.get('/', async (req, res) => {
   }
   if (grade) {
     const VALID_GRADES = ['A', 'B', 'C', 'Ungraded'];
-    if (VALID_GRADES.includes(grade)) {
+    if (VALID_GRADES.includes(req.query.grade)) {
       conditions.push(`p.grade = $${params.length + 1}`);
-      params.push(grade);
+      params.push(req.query.grade);
     }
   }
 
@@ -153,6 +163,15 @@ router.get('/search', (req, res) => {
   }
 
   try {
+    const products = db.prepare(`
+      SELECT p.*, u.id as farmer_id, u.name as farmer_name, u.bio as farmer_bio, u.location as farmer_location, u.avatar_url as farmer_avatar, fts.rank
+      FROM products_fts fts
+      JOIN products p ON p.id = fts.rowid
+      JOIN users u ON p.farmer_id = u.id
+      WHERE products_fts MATCH ?
+      ORDER BY fts.rank
+      LIMIT 100
+    `).all(q);
     const products = db.prepare(
       `SELECT p.*, u.name as farmer_name, fts.rank
        FROM products_fts fts
@@ -358,9 +377,10 @@ router.post('/', auth, validate.product, async (req, res) => {
   const pricingType = req.body.pricing_type === 'weight' ? 'weight' : 'unit';
   const minWeight   = pricingType === 'weight' ? parseFloat(req.body.min_weight) : null;
   const maxWeight   = pricingType === 'weight' ? parseFloat(req.body.max_weight) : null;
-  const minOrderQty = parseInt(req.body.min_order_quantity, 10) || 1;
 
   const { rows } = await db.query(
+    'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, low_stock_threshold, nutrition, pricing_type, min_weight, max_weight, allergens) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING id',
+    [req.user.id, safeName, safeDescription, safeCategory, price, quantity, safeUnit, safeImageUrl, parseInt(req.body.low_stock_threshold) || 5, nutrition ? JSON.stringify(nutrition) : null, pricingType, minWeight, maxWeight, allergenResult.allergens]
     'INSERT INTO products (farmer_id, name, description, category, price, quantity, unit, image_url, low_stock_threshold, nutrition, pricing_type, min_weight, max_weight, allergens, allowed_regions) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING id',
     [req.user.id, safeName, safeDescription, safeCategory, price, quantity, safeUnit, safeImageUrl, parseInt(req.body.low_stock_threshold) || 5, nutrition ? JSON.stringify(nutrition) : null, pricingType, minWeight, maxWeight, allergenResult.allergens, parseAllowedRegions(req.body.allowed_regions)]
 
@@ -394,6 +414,66 @@ router.post('/', auth, validate.product, async (req, res) => {
   res.json({ success: true, id: productId, message: 'Product listed' });
 });
 
+/**
+ * @swagger
+ * /api/products/{id}:
+ *   patch:
+ *     summary: Update a product listing (farmer only)
+ *     tags: [Products]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: integer }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               description: { type: string }
+ *               price: { type: number, description: Price in XLM, must be positive }
+ *               quantity:
+ *                 type: integer
+ *                 minimum: 0
+ *                 description: >
+ *                   Stock quantity. Must be a non-negative integer.
+ *                   Setting quantity to 0 hides the product from public listings
+ *                   (GET /api/products) but the product remains visible to the
+ *                   farmer via GET /api/products/mine/list.
+ *               unit: { type: string }
+ *               category: { type: string }
+ *               low_stock_threshold: { type: integer, minimum: 0 }
+ *     responses:
+ *       200:
+ *         description: Product updated
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success: { type: boolean }
+ *                 message: { type: string }
+ *       400:
+ *         description: Validation error
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/Error' }
+ *       403:
+ *         description: Only farmers can edit products
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/Error' }
+ *       404:
+ *         description: Not found or not yours
+ *         content:
+ *           application/json:
+ *             schema: { $ref: '#/components/schemas/Error' }
+ */
 // PATCH /api/products/bulk-price
 router.patch('/bulk-price', auth, async (req, res) => {
   if (req.user.role !== 'farmer') return err(res, 403, 'Farmers only', 'forbidden');
@@ -495,6 +575,8 @@ router.patch('/:id', auth, async (req, res) => {
 
   if (updates.name) updates.name = sanitizeText(updates.name);
   if (updates.description) updates.description = sanitizeText(updates.description);
+  if (updates.unit !== undefined) updates.unit = sanitizeText(updates.unit);
+  if (updates.category !== undefined) updates.category = sanitizeText(updates.category);
   if (updates.price !== undefined) {
     updates.price = parseFloat(updates.price);
     if (isNaN(updates.price) || updates.price <= 0) return err(res, 400, 'Price must be positive', 'validation_error');
@@ -533,6 +615,15 @@ router.patch('/:id', auth, async (req, res) => {
     if (allergenResult.error) return err(res, 400, allergenResult.error, 'validation_error');
     updates.allergens = allergenResult.allergens;
   }
+
+  if (updates.allowed_regions !== undefined) {
+    updates.allowed_regions = parseAllowedRegions(updates.allowed_regions);
+  }
+
+  const keys   = Object.keys(updates);
+  const values = Object.values(updates);
+  const setClauses = keys.map((k, i) => `${k} = $${i + 1}`).join(', ');
+  await db.query(`UPDATE products SET ${setClauses} WHERE id = $${keys.length + 1}`, [...values, req.params.id]);
   if (updates.allowed_regions !== undefined) {
     updates.allowed_regions = parseAllowedRegions(updates.allowed_regions);
   }

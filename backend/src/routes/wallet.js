@@ -62,6 +62,9 @@ router.get('/', auth, async (req, res) => {
   const cached = await cache.get(cacheKey);
   if (cached) return res.json(cached);
 
+  const { rows } = await db.query('SELECT stellar_public_key, referral_code FROM users WHERE id = $1', [req.user.id]);
+  const user = rows[0];
+  if (!user) return err(res, 404, 'User not found', 'user_not_found');
   try {
     const cacheKey = `wallet:${req.user.id}`;
     const cached = await cache.get(cacheKey);
@@ -71,11 +74,22 @@ router.get('/', auth, async (req, res) => {
     const user = rows[0];
     if (!user) return err(res, 404, 'User not found', 'user_not_found');
 
-    const [balance, balances] = await Promise.all([
-      getBalance(user.stellar_public_key),
-      getAllBalances(user.stellar_public_key),
-    ]);
+  const [balance, balances] = await Promise.all([
+    getBalance(user.stellar_public_key),
+    getAllBalances(user.stellar_public_key),
+  ]);
 
+  const payload = {
+    success: true,
+    publicKey: user.stellar_public_key,
+    balance,
+    availableBalance: availableAfterReserve(balance),
+    baseReserve: BASE_RESERVE_XLM,
+    balances,
+    referralCode: user.referral_code,
+  };
+  await cache.set(cacheKey, payload, 30);
+  res.json(payload);
     const payload = {
       success: true,
       publicKey: user.stellar_public_key,
@@ -251,19 +265,10 @@ router.post('/send', auth, validate.sendXLM, async (req, res) => {
       memo: memo || '',
     });
 
-    return res.json({
-      success: true,
-      txHash,
-      amount,
-      destination,
-      memo: memo || null,
-    });
+    return res.json({ success: true, txHash, amount, destination, memo: memo || null });
   } catch (e) {
     const stellarMsg = e?.response?.data?.extras?.result_codes?.operations?.[0] || e.message;
-    return res.status(502).json({
-      success: false,
-      error: `Stellar transaction failed: ${stellarMsg}`,
-    });
+    return res.status(502).json({ success: false, error: `Stellar transaction failed: ${stellarMsg}` });
   }
 });
 

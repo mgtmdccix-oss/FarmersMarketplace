@@ -567,6 +567,9 @@ router.post('/contracts/deploy', upload.single('wasm'), async (req, res) => {
       return res.status(400).json({ success: false, error: error.message });
     }
     res.status(500).json({ success: false, error: 'Contract deployment failed: ' + error.message });
+  }
+});
+
 // ── Contract Documentation & Analysis ──────────────────────────────────────
 
 const { getContractABI, analyzeContractFees } = require('../utils/stellar');
@@ -761,6 +764,8 @@ router.get('/contracts/:id/compare', async (req, res) => {
   await cache.set(cacheKey, diff, 600); // cache 10 minutes
 
   res.json({ success: true, data: diff });
+});
+
 // ── Contract Alerts ────────────────────────────────────────────────────────
 
 // GET /api/admin/contract-alerts
