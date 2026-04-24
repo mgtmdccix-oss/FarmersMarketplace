@@ -76,6 +76,7 @@ jest.mock('../src/routes', () => {
   const express = require('express');
   const router = express.Router();
   router.use('/api/auth', require('../src/routes/auth'));
+  router.use('/api/analytics', require('../src/routes/analytics'));
   return router;
 });
 
