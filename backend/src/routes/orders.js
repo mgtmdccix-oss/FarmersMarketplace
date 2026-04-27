@@ -154,6 +154,14 @@ router.post('/', auth, validate.order, async (req, res) => {
     );
     if (!cRows[0]) return err(res, 400, 'Invalid or expired coupon', 'invalid_coupon');
     appliedCoupon = cRows[0];
+    if (appliedCoupon.max_uses_per_user != null) {
+      const { rows: useRows } = await db.query(
+        'SELECT COUNT(*) as cnt FROM coupon_uses WHERE coupon_id = $1 AND user_id = $2',
+        [appliedCoupon.id, req.user.id]
+      );
+      if (parseInt(useRows[0].cnt, 10) >= appliedCoupon.max_uses_per_user)
+        return err(res, 409, 'Coupon already used', 'coupon_already_used');
+    }
     discount = appliedCoupon.discount_type === 'percent'
       ? parseFloat((subtotal * appliedCoupon.discount_value / 100).toFixed(7))
       : Math.min(parseFloat(appliedCoupon.discount_value), subtotal);
@@ -198,7 +206,7 @@ router.post('/', auth, validate.order, async (req, res) => {
   let appliedCoupon = null;
 
   if (coupon_code) {
-    const { coupon, error, code: errCode } = resolveCoupon(coupon_code, product.farmer_id);
+    const { coupon, error, code: errCode } = resolveCoupon(coupon_code, product.farmer_id, req.user.id);
     if (!error) {
        discount = calcDiscount(coupon, subtotal);
        appliedCoupon = coupon;
@@ -258,6 +266,7 @@ router.post('/', auth, validate.order, async (req, res) => {
   if (payment_method === 'sep7') {
     if (appliedCoupon) {
       db.prepare('UPDATE coupons SET used_count = used_count + 1 WHERE id = ?').run(appliedCoupon.id);
+      db.prepare('INSERT INTO coupon_uses (coupon_id, user_id) VALUES (?, ?)').run(appliedCoupon.id, req.user.id);
     }
 
     const responseData = {
@@ -433,6 +442,7 @@ router.post('/', auth, validate.order, async (req, res) => {
     // Cleanup and notifications
     if (appliedCoupon) {
       await db.query('UPDATE coupons SET used_count = used_count + 1 WHERE id = $1', [appliedCoupon.id]);
+      await db.query('INSERT INTO coupon_uses (coupon_id, user_id) VALUES ($1, $2)', [appliedCoupon.id, req.user.id]);
     }
 
     if (idempotencyKey) await cacheResponse(idempotencyKey, responseData);
